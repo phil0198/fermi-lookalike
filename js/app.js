@@ -24,6 +24,23 @@
     db.player = newPlayerId();
     store.save(db);
   }
+  // Display preferences (kept in this browser). Appearance follows the system until chosen.
+  db.settings = Object.assign({
+    units: /^en-US$/i.test(navigator.language || "") ? "imperial" : "metric",
+    palette: "classic",
+    scheme: null,
+  }, db.settings);
+  const settings = db.settings;
+  function applySettings() {
+    const root = document.documentElement;
+    root.dataset.palette = settings.palette;
+    root.dataset.scheme = settings.scheme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  }
+  function setSetting(key, value) {
+    settings[key] = value;
+    store.save(db);
+    applySettings();
+  }
 
   /* ---------------- Dates ---------------- */
   const prettyDate = (s) => new Date(s + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
@@ -121,6 +138,24 @@
     const units = [[1e12, "T"], [1e9, "B"], [1e6, "M"], [1e3, "K"]];
     for (const [v, s] of units) if (n >= v) return trim(n / v) + s;
     return trim(n);
+  }
+
+  /* ---------------- Units ---------------- */
+  // Answers are stored in metric. Imperial display multiplies by a fixed factor, so the
+  // "times off" ratio (and the score) is identical in either system. Temperatures stay
+  // in °C, and questions whose wording names a metric unit stay as written.
+  const IMPERIAL = {
+    meters: ["feet", 3.28084], km: ["miles", 0.621371], cm: ["inches", 0.393701], mm: ["inches", 0.0393701],
+    kg: ["pounds", 2.20462], grams: ["ounces", 0.035274], tonnes: ["tons", 1.10231], liters: ["gallons", 0.264172],
+    "m²": ["sq ft", 10.7639], "km²": ["sq miles", 0.386102], "km/h": ["mph", 0.621371], "m/s": ["ft/s", 3.28084],
+    "km/s": ["mi/s", 0.621371],
+  };
+  const NAMES_METRIC = /\b\d[\d,.]*\s?(km|kg|g|m|cm|mm|ml|L)\b|\b(liters?|meters?|kilometers?|grams?|kilograms?|tonnes?|centimeters?|millimeters?|km|kg|cm|mm|ml)\b/i;
+  function unitsFor(p) {
+    const conv = IMPERIAL[p.unit];
+    const convertible = !!conv && !NAMES_METRIC.test(p.q);
+    const imperial = convertible && settings.units === "imperial";
+    return { unit: imperial ? conv[0] : p.unit, f: imperial ? conv[1] : 1, convertible };
   }
 
   // Safe arithmetic evaluator: numbers (with k/m/b/t suffixes), + - * / ^ and parentheses.
@@ -222,11 +257,12 @@
   }
 
   /* ---------------- Question view ---------------- */
-  function renderQuestion(i) {
+  function renderQuestion(i, initial = "") {
     const p = puzzle[i];
+    const U = unitsFor(p);
     const input = h("input", {
       class: "guess", id: "guess", type: "text", inputmode: "decimal", autocomplete: "off",
-      spellcheck: "false", placeholder: "your guess", "aria-label": `Your guess in ${p.unit}`,
+      spellcheck: "false", placeholder: "your guess", "aria-label": `Your guess in ${U.unit}`,
     });
     const hint = h("p", { class: "hint", "aria-live": "polite" }, " ");
     const lock = h("button", { class: "pill pill-outline", type: "submit", disabled: true },
@@ -236,7 +272,7 @@
       const v = evaluate(input.value);
       lock.disabled = !valid(v);
       if (!input.value.trim()) hint.textContent = " ";
-      else if (valid(v)) hint.textContent = /[^\d.,\s]/.test(input.value) ? `= ${fmtNum(v)} ${p.unit}` : " ";
+      else if (valid(v)) hint.textContent = /[^\d.,\s]/.test(input.value) ? `= ${fmtNum(v)} ${U.unit}` : " ";
       else hint.textContent = "Enter a positive number, e.g. 2.5k or 365*24";
       hint.classList.toggle("err", !!input.value.trim() && !valid(v));
     };
@@ -251,17 +287,30 @@
         e.preventDefault();
         const v = evaluate(input.value);
         if (!valid(v)) return;
-        game.guesses[i] = v;
+        game.guesses[i] = v / U.f; // store in metric
         persist();
         go({ mode: "reveal", i });
       },
     },
-      h("label", { class: "guess-wrap" }, input, h("span", { class: "unit" }, p.unit)),
+      h("label", { class: "guess-wrap" }, input, U.convertible
+        ? h("button", {
+            class: "unit", type: "button", title: "Switch units",
+            "aria-label": `${U.unit}. Switch to ${settings.units === "imperial" ? "metric" : "imperial"}`,
+            onclick: (e) => {
+              e.preventDefault();
+              const v = evaluate(input.value);
+              setSetting("units", settings.units === "imperial" ? "metric" : "imperial");
+              const next = unitsFor(p);
+              renderQuestion(i, valid(v) ? String(+((v / U.f) * next.f).toPrecision(4)) : input.value);
+            },
+          }, U.unit)
+        : h("span", { class: "unit" }, U.unit)),
       hint,
       h("div", { class: "row-between" }, calcBtn, lock)
     );
 
     $("#body").replaceChildren(h("h1", { class: "question" }, p.q), form);
+    if (initial) { input.value = initial; sync(); }
     requestAnimationFrame(() => input.focus({ preventScroll: true }));
   }
 
@@ -340,6 +389,7 @@
   /* ---------------- Reveal view ---------------- */
   function renderReveal(i) {
     const p = puzzle[i];
+    const U = unitsFor(p);
     const g = game.guesses[i];
     const off = Math.log10(g / p.a);
     const r = ratio(g, p.a);
@@ -357,7 +407,7 @@
       note.textContent = `· ${crowdNote(st)}`;
       chart.replaceWith(histogram({
         bins: st.bins, range: st.range, you: off, mark: 0,
-        labels: [[-1, compact(p.a / 10)], [0, compact(p.a), "Answer"], [1, compact(p.a * 10)]],
+        labels: [[-1, compact(p.a * U.f / 10)], [0, compact(p.a * U.f), "Answer"], [1, compact(p.a * U.f * 10)]],
       }));
     });
 
@@ -371,8 +421,8 @@
     $("#body").replaceChildren(
       h("p", { class: "question-mini" }, p.q),
       h("div", { class: "duo" },
-        h("div", { class: "box box-dim" }, h("p", { class: "eyebrow" }, "You guessed"), h("p", { class: "big-num" }, fmtNum(g)), h("p", { class: "box-unit" }, p.unit)),
-        h("div", { class: "box box-answer" }, h("p", { class: "eyebrow" }, "Answer"), h("p", { class: "big-num" }, fmtNum(p.a)), h("p", { class: "box-unit" }, p.unit))
+        h("div", { class: "box box-dim" }, h("p", { class: "eyebrow" }, "You guessed"), h("p", { class: "big-num" }, fmtNum(g * U.f)), h("p", { class: "box-unit" }, U.unit)),
+        h("div", { class: "box box-answer" }, h("p", { class: "eyebrow" }, "Answer"), h("p", { class: "big-num" }, fmtNum(p.a * U.f)), h("p", { class: "box-unit" }, U.unit))
       ),
       h("div", { class: "split" },
         h("div", { class: "landed" },
@@ -460,8 +510,9 @@
     c.width = 1080; c.height = 1080;
     const x = c.getContext("2d");
     const font = (w, s) => `${w} ${s}px "Inter Tight", "Helvetica Neue", Arial, sans-serif`;
-    x.fillStyle = "#efd45b"; x.fillRect(0, 0, 1080, 1080);
-    x.fillStyle = "#111";
+    const css = getComputedStyle(document.documentElement);
+    x.fillStyle = css.getPropertyValue("--r-bg").trim() || "#efd45b"; x.fillRect(0, 0, 1080, 1080);
+    x.fillStyle = css.getPropertyValue("--r-ink").trim() || "#111";
     x.font = font(800, 48); x.fillText("Ballpark", 90, 140);
     x.textAlign = "right"; x.fillText(`No. ${pad3(day)}`, 990, 140); x.textAlign = "left";
     x.font = font(700, 36); x.globalAlpha = 0.7; x.fillText("SCORE", 90, 300); x.globalAlpha = 1;
@@ -569,6 +620,15 @@
       tile(st.maxStreak, "Max streak"),
     ];
   }
+  // Finished puzzles as [{day, score}], from the account when signed in.
+  function finishedDays() {
+    if (account) return account.history.filter((r) => r.score != null).map((r) => ({ day: r.day, score: r.score }));
+    return Object.keys(db.games).map(Number)
+      .filter((n) => n <= TODAY && db.games[n].guesses.length >= PER_DAY)
+      .map((n) => ({ day: n, score: dayScore(db.games[n].guesses, puzzleFor(n)) }));
+  }
+  const BUCKETS = [[1, 1.5, "under 1.5×"], [1.5, 2, "1.5–2×"], [2, 5, "2–5×"], [5, 10, "5–10×"], [10, 30, "10–30×"], [30, Infinity, "30× +"]];
+
   function renderStats() {
     $("#statGrid").replaceChildren(...statTiles(account ? account.stats : localStats()));
     const note = $("#statsNote");
@@ -581,16 +641,115 @@
     } else {
       note.replaceChildren("These stats live only in this browser.");
     }
+    const days = finishedDays().sort((a, b) => b.day - a.day);
+    const counts = BUCKETS.map(([lo, hi]) => days.filter((d) => d.score >= lo && d.score < hi).length);
+    const max = Math.max(1, ...counts);
+    $("#dist").replaceChildren(...BUCKETS.map(([, , label], k) =>
+      h("div", { class: "dist-row" }, h("span", {}, label),
+        h("div", { class: "dist-bar" }, counts[k] ? h("i", { style: `width:${Math.max(10, (counts[k] / max) * 100)}%` }, counts[k]) : null))));
+    $("#history").replaceChildren(...(days.length
+      ? days.slice(0, 30).map((d) => h("li", {},
+          h("b", {}, `No. ${pad3(d.day)}`),
+          h("span", { class: "muted" }, d.day === TODAY ? "Today" : prettyDate(dateOf(d.day))),
+          h("b", {}, fmtX(d.score))))
+      : [h("li", {}, h("span", { class: "muted" }, "Finish a puzzle and it shows up here."))]));
+  }
+  function openStats() {
+    renderStats();
+    if ($("#panel").open) $("#panel").close();
+    $("#statsModal").showModal();
   }
 
   /* ---------------- Accounts ---------------- */
   let serverUp = false;
 
+  const PERSON_ICON = '<circle cx="12" cy="8.5" r="3.5"/><path d="M5 19.5c1.2-3.3 3.8-5 7-5s5.8 1.7 7 5"/>';
+  const initial = (name) => (name || "?").trim().charAt(0).toUpperCase();
+  function avatarContent() {
+    return account ? initial(account.user.username) : h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", html: PERSON_ICON });
+  }
   function renderAccountBtn() {
-    const btn = $("#accountBtn");
-    btn.hidden = !serverUp;
-    btn.textContent = account ? account.user.username : "Sign in";
-    btn.setAttribute("aria-label", account ? `Account: ${account.user.username}` : "Sign in or create an account");
+    const btn = $("#avatarBtn");
+    btn.replaceChildren(avatarContent());
+    btn.setAttribute("aria-label", account ? `${account.user.username}: stats and settings` : "Stats and settings");
+    if ($("#panel").open) renderPanel();
+  }
+
+  /* ---------------- Account panel ---------------- */
+  const PALETTES = [
+    ["classic", "Classic", ["#eb6a4a", "#efd45b", "#fffaf0"]],
+    ["blossom", "Blossom", ["#c7577e", "#f5c6d5", "#ffe1ea"]],
+    ["chalk", "Chalk", ["#34423c", "#ebe7da", "#f1e7c8"]],
+    ["midnight", "Midnight", ["#11292d", "#edbb4c", "#5ef0a8"]],
+  ];
+  const SUN = '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/>';
+  const MOON = '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/>';
+
+  function option({ pressed, onclick, label, sub, lead }) {
+    return h("button", { class: "opt", type: "button", "aria-pressed": pressed ? "true" : "false", onclick },
+      lead || null, h("span", {}, h("b", {}, label), sub ? h("small", {}, sub) : null));
+  }
+
+  function renderPanel() {
+    const st = account ? account.stats : localStats();
+    const scheme = document.documentElement.dataset.scheme;
+    const change = (key, value) => {
+      setSetting(key, value);
+      renderPanel();
+      if (key === "units" && view.mode !== "question") render(); // question view re-renders on close
+      if (key === "units" && view.mode === "question") renderQuestion(view.i);
+    };
+    const tile = (v, l) => h("div", { class: "tile" }, h("b", {}, v), h("span", {}, l));
+
+    const who = account
+      ? h("div", { class: "who" },
+          h("span", { class: "avatar", "aria-hidden": "true" }, initial(account.user.username)),
+          h("div", {}, h("b", {}, account.user.username), h("span", {}, "Signed in. Your stats sync across devices.")))
+      : h("div", { class: "who" },
+          h("span", { class: "avatar", "aria-hidden": "true" }, avatarContent()),
+          h("div", {}, h("b", {}, "Playing as a guest"),
+            h("span", {}, serverUp ? "Sign in to keep your stats on every device." : "Your stats are saved in this browser.")));
+
+    $("#panelBody").replaceChildren(...[
+      h("button", { class: "icon-btn modal-close", type: "button", "aria-label": "Close", onclick: () => $("#panel").close() },
+        h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", html: '<path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>' })),
+      h("div", { class: "panel-section" }, who,
+        !account && serverUp ? h("div", { class: "panel-actions", style: "margin-top:16px" },
+          h("button", { class: "pill pill-solid", type: "button", onclick: () => openAccount("signin") }, "Sign in"),
+          h("button", { class: "pill pill-ghost", type: "button", onclick: () => openAccount("signup") }, "Create account")) : null),
+      h("div", { class: "panel-section" },
+        h("div", { class: "panel-head" }, h("p", { class: "section-title" }, "Stats"),
+          h("button", { class: "text-btn", type: "button", onclick: openStats }, "See full stats")),
+        h("div", { class: "tiles" },
+          tile(st.played, "Played"),
+          tile(st.streak, "Day streak"),
+          tile(st.average ? fmtX(st.average) : "—", "Average multiple"),
+          tile(st.best ? fmtX(st.best) : "—", "Best day"))),
+      h("div", { class: "panel-section" },
+        h("p", { class: "section-title" }, "Units"),
+        h("p", { class: "help" }, "Tapping the unit on a question card switches this too."),
+        h("div", { class: "seg" },
+          option({ pressed: settings.units === "imperial", onclick: () => change("units", "imperial"), label: "Imperial", sub: "feet, pounds, gallons" }),
+          option({ pressed: settings.units === "metric", onclick: () => change("units", "metric"), label: "Metric", sub: "meters, kilograms, liters" }))),
+      h("div", { class: "panel-section" },
+        h("p", { class: "section-title" }, "Appearance"),
+        h("div", { class: "seg" },
+          option({ pressed: scheme === "light", onclick: () => change("scheme", "light"), label: "Light",
+            lead: h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", html: SUN }) }),
+          option({ pressed: scheme === "dark", onclick: () => change("scheme", "dark"), label: "Dark",
+            lead: h("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", html: MOON }) }))),
+      h("div", { class: "panel-section" },
+        h("p", { class: "section-title" }, "Theme"),
+        h("div", { class: "seg" }, PALETTES.map(([key, label, colors]) =>
+          option({ pressed: settings.palette === key, onclick: () => change("palette", key), label,
+            lead: h("span", { class: "swatches", "aria-hidden": "true" }, colors.map((c) => h("i", { style: `background:${c}` }))) })))),
+      account ? h("div", { class: "panel-section" },
+        h("div", { class: "panel-actions" }, h("button", { class: "pill pill-ghost", type: "button", onclick: signOut }, "Sign out"))) : null,
+    ].filter(Boolean));
+  }
+  function openPanel() {
+    renderPanel();
+    $("#panel").showModal();
   }
 
   // Take the server's copy of a signed-in player's history, and send up anything only this browser has.
@@ -627,6 +786,7 @@
   }
 
   function openAccount(mode) {
+    if ($("#panel").open) $("#panel").close();
     renderAccount(mode || "signin");
     const dlg = $("#accountModal");
     if (!dlg.open) dlg.showModal();
@@ -699,7 +859,8 @@
     db.player = newPlayerId();
     db.games = {};
     store.save(db);
-    $("#accountModal").close();
+    if ($("#accountModal").open) $("#accountModal").close();
+    if ($("#panel").open) $("#panel").close();
     renderAccountBtn();
     reloadGame();
     toast("Signed out");
@@ -723,10 +884,13 @@
   $("#scrim").addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
   $("#helpBtn").addEventListener("click", () => $("#helpModal").showModal());
-  $("#statsBtn").addEventListener("click", () => { renderStats(); $("#statsModal").showModal(); });
-  $("#accountBtn").addEventListener("click", () => openAccount());
+  $("#statsBtn").addEventListener("click", openStats);
+  $("#avatarBtn").addEventListener("click", openPanel);
+  for (const b of document.querySelectorAll("[data-close]")) b.addEventListener("click", () => b.closest("dialog").close());
+  matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => { if (!settings.scheme) applySettings(); });
   for (const d of document.querySelectorAll("dialog")) d.addEventListener("click", (e) => { if (e.target === d) d.close(); });
 
+  applySettings();
   render();
   renderAccountBtn();
   call("/api/me", { method: "GET" }).then((res) => {

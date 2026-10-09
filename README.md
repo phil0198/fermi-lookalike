@@ -56,14 +56,20 @@ The front end still works without the server: `python3 -m http.server`, or GitHu
 - **Answer reveal.** You get your ratio, a "how everyone guessed" histogram, and an expandable *Napkin math* breakdown.
 - **Results card.** It shows your score, percentile, a distribution chart, and a per-question breakdown. You can share it as a PNG image or copy it as text.
 - **Archive.** Every past puzzle is playable from the side menu.
-- **Stats.** Tracks games played, average, best, and streaks. Signed-in players' stats come from the server; anonymous players' stats live in `localStorage`.
+- **Account panel.** The round button at the top opens it. It shows your initial when signed in, and has:
+  - **Stats:** played, day streak, average multiple and best day, plus a full-stats view with a score distribution and recent puzzles. Signed-in players' stats come from the server; guests' stats live in `localStorage`.
+  - **Units:** imperial or metric. Tapping the unit on a question card switches it too. Answers are stored in metric and converted for display. Conversion is a fixed multiplier, so scores are identical in both systems. Temperatures stay in °C, and questions whose wording names a metric unit stay as written.
+  - **Appearance:** light or dark. It follows the system until you choose.
+  - **Theme:** four color palettes (Classic, Blossom, Chalk and Midnight).
+  - Display settings are saved in the browser.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
 | `index.html` | Page shell, modals, drawer |
-| `css/style.css` | All styling (coral question card, yellow results card, responsive) |
+| `css/style.css` | All styling, built on color tokens: palettes via `data-palette`, light/dark via `data-scheme` |
+| `js/theme-init.js` | Applies the saved theme before first paint |
 | `js/questions.js` | Categories and the question bank (answer, unit, napkin math) |
 | `js/puzzle.js` | Daily schedule (no repeats until the bank is used up), shared by the browser and the server |
 | `js/app.js` | Scoring, rendering, calculator, sharing, archive, stats, API client |

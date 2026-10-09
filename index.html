@@ -11,9 +11,15 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@500;600;700;800;900&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/style.css" />
+  <script src="js/theme-init.js"></script>
 </head>
 <body>
   <main class="page">
+    <div class="topbar">
+      <button class="avatar" id="avatarBtn" type="button" aria-haspopup="dialog" aria-label="Account, stats and settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 19.5c1.2-3.3 3.8-5 7-5s5.8 1.7 7 5"/></svg>
+      </button>
+    </div>
     <section class="card" id="card" data-mode="question">
       <header class="card-head">
         <div class="head-left">
@@ -35,8 +41,6 @@
       <button class="link" id="statsBtn" type="button">Stats</button>
       <span aria-hidden="true">·</span>
       <button class="link" id="archiveBtn" type="button">Archive</button>
-      <span aria-hidden="true">·</span>
-      <button class="link account-link" id="accountBtn" type="button" hidden>Sign in</button>
       <span class="countdown" id="countdown"></span>
     </nav>
   </main>
@@ -67,14 +71,30 @@
     </form>
   </dialog>
 
-  <!-- Stats -->
-  <dialog class="modal" id="statsModal">
-    <form method="dialog" class="modal-inner">
+  <!-- Full stats -->
+  <dialog class="modal" id="statsModal" aria-labelledby="statsTitle">
+    <div class="modal-inner">
+      <button class="icon-btn modal-close" type="button" data-close aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+      </button>
       <p class="eyebrow">Your stats</p>
+      <h2 id="statsTitle">How close you get</h2>
       <div class="stat-grid" id="statGrid"></div>
       <p class="muted small-print" id="statsNote"></p>
-      <button class="pill pill-solid" value="close">Close</button>
-    </form>
+      <div class="panel-section">
+        <p class="section-title">Daily scores</p>
+        <div class="dist" id="dist"></div>
+      </div>
+      <div class="panel-section">
+        <p class="section-title">Recent puzzles</p>
+        <ol class="history" id="history"></ol>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Account panel: stats, units, appearance, theme -->
+  <dialog class="modal panel" id="panel" aria-label="Account and settings">
+    <div class="modal-inner" id="panelBody"></div>
   </dialog>
 
   <!-- Account -->
