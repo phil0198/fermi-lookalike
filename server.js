@@ -301,20 +301,37 @@ const MIME = {
 };
 const PUBLIC_DIRS = ["css", "js"];
 
-function serveStatic(req, res, pathname) {
+// A fingerprint of every asset, stamped into index.html's asset URLs (?v=...). Each deploy
+// changes the URLs, so browsers fetch fresh CSS/JS instead of a cached older copy.
+const ASSET_VERSION = (() => {
+  const h = crypto.createHash("sha256");
+  for (const dir of PUBLIC_DIRS) {
+    for (const name of fs.readdirSync(path.join(ROOT, dir)).sort()) h.update(name).update(fs.readFileSync(path.join(ROOT, dir, name)));
+  }
+  return h.digest("hex").slice(0, 12);
+})();
+let indexHtml = null;
+
+function serveStatic(req, res, pathname, versioned) {
   let decoded;
   try { decoded = decodeURIComponent(pathname); } catch { throw new HttpError(400, "bad path"); }
   const file = path.resolve(ROOT, "." + (decoded === "/" ? "/index.html" : decoded));
   const rel = path.relative(ROOT, file);
   // Only the page itself and the asset folders are public (never server.js, data/, .git, ...).
   if (rel !== "index.html" && !PUBLIC_DIRS.some((d) => rel.startsWith(d + path.sep))) return notFound(res);
+  if (rel === "index.html") {
+    indexHtml = indexHtml || Buffer.from(fs.readFileSync(file, "utf8").replace(/__V__/g, ASSET_VERSION));
+    res.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": MIME[".html"], "Content-Length": indexHtml.length, "Cache-Control": "no-cache" });
+    return res.end(req.method === "HEAD" ? undefined : indexHtml);
+  }
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) return notFound(res);
     res.writeHead(200, {
       ...SECURITY_HEADERS,
       "Content-Type": MIME[path.extname(file)] || "application/octet-stream",
       "Content-Length": st.size,
-      "Cache-Control": rel === "index.html" ? "no-cache" : "public, max-age=300",
+      // Versioned URLs never change content, so they can be cached for good; anything else is rechecked.
+      "Cache-Control": versioned ? "public, max-age=31536000, immutable" : "no-cache",
     });
     if (req.method === "HEAD") return res.end();
     fs.createReadStream(file).pipe(res);
@@ -440,7 +457,7 @@ function createServer({
         return await handleApi(req, res, url, db, { trustProxy, allowAuth: () => authLimit(ip) });
       }
       if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "method not allowed");
-      return serveStatic(req, res, url.pathname);
+      return serveStatic(req, res, url.pathname, url.searchParams.get("v") === ASSET_VERSION);
     } catch (err) {
       const status = err instanceof HttpError ? err.status : 500;
       if (status === 500) console.error(err);

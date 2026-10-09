@@ -487,7 +487,23 @@
         )
       )
     );
+    fitScore();
+    scoreResize?.disconnect();
+    scoreResize?.observe(document.querySelector(".sum-left"));
   }
+
+  // CSS sizes the score from its column; this measures the real text and shrinks it if a
+  // browser or font still renders it wider than the column.
+  function fitScore() {
+    const el = document.querySelector(".score");
+    if (!el) return;
+    el.style.fontSize = "";
+    const avail = el.clientWidth, need = el.scrollWidth;
+    if (need > avail) el.style.fontSize = `${(parseFloat(getComputedStyle(el).fontSize) * avail) / need * 0.97}px`;
+  }
+  const scoreResize = typeof ResizeObserver === "function" ? new ResizeObserver(() => fitScore()) : null;
+  window.addEventListener("resize", fitScore);
+  document.fonts?.ready.then(fitScore);
 
   /* ---------------- Sharing ---------------- */
   function shareLines() {
