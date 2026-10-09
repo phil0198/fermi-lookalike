@@ -17,20 +17,23 @@ npm test           # API + static-serving tests
 | Env var | Default | |
 | --- | --- | --- |
 | `PORT` | `3000` | |
-| `DB_PATH` | `./data/ballpark.db` | SQLite file (created automatically) |
+| `TURSO_DATABASE_URL` | unset | Hosted Turso database. When set, guesses are stored there |
+| `TURSO_AUTH_TOKEN` | unset | Its auth token |
+| `DB_PATH` | `./data/ballpark.db` | Local SQLite file, used when Turso isn't set (created automatically) |
 | `TRUST_PROXY` | unset | Set when running behind a reverse proxy, so rate limiting uses `X-Forwarded-For` |
 
-### Deploy (public website)
+### Deploy for free (public website)
 
-The repo includes a [Render](https://render.com) Blueprint (`render.yaml`):
+This setup uses two free services: [Render](https://render.com) runs the server, and [Turso](https://turso.tech) stores the guesses. Free Render servers have no disk that survives a restart, so the guesses need to live in Turso.
 
-1. Push this repo to GitHub.
-2. In Render, choose **New → Blueprint** and pick the repo. Render builds the `Dockerfile` and attaches a 1 GB disk at `/data` for the database.
-3. When the deploy finishes, the game is live at `https://ballpark-xxxx.onrender.com`. To use your own domain, go to **Settings → Custom Domains**.
+1. **Create the database.** Sign up at Turso (no credit card) and create a database. From the database page, copy its **URL** (`libsql://…turso.io`) and create an **auth token**. The server creates its table on first start.
+2. **Push this repo to GitHub.**
+3. **Deploy on Render.** Choose **New → Blueprint** and pick the repo. Render reads `render.yaml` and asks for `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN`: paste the two values from step 1.
+4. The game is live at `https://ballpark-xxxx.onrender.com`. The deploy log should say `Storage: Turso`.
 
-The disk needs a paid instance (Starter, about $7/month). On a free instance the database is wiped every time the service restarts or redeploys.
+The free Render server sleeps after 15 minutes without visitors, so the first visit after that takes about a minute to load. After that it's fast again.
 
-Any host that runs a Dockerfile with a persistent volume works the same way, for example Railway or Fly.io. Mount the volume at `/data`, and set `TRUST_PROXY=1` when the host puts a proxy in front of the app.
+Without the Turso variables, the server falls back to a local SQLite file (`DB_PATH`). That's fine for local use or for a host with a persistent disk.
 
 ### Docker
 
@@ -63,8 +66,10 @@ The front end still works without the server: `python3 -m http.server`, or GitHu
 | `js/questions.js` | Categories and the question bank (answer, unit, napkin math) |
 | `js/puzzle.js` | Daily puzzle selection, shared by the browser and the server |
 | `js/app.js` | Scoring, rendering, calculator, sharing, archive, stats, API client |
-| `server.js` | Static file server + JSON API + SQLite storage |
-| `test/server.test.js` | Server tests (`npm test`) |
+| `server.js` | Static file server + JSON API |
+| `store.js` | Guess storage: Turso over HTTP, or local SQLite |
+| `test/server.test.js` | Server tests, run against both storage backends (`npm test`) |
+| `test/mock-turso.js` | Local stand-in for Turso's HTTP API, used by the tests |
 
 ## Adding questions
 

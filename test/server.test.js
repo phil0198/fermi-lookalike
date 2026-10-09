@@ -4,16 +4,28 @@ const assert = require("node:assert/strict");
 const { createServer } = require("../server.js");
 const Puzzle = require("../js/puzzle.js");
 
-let server, base;
+const { mockTurso } = require("./mock-turso.js");
+
+let server, base, turso;
 const TODAY = Puzzle.today();
 const answers = Puzzle.puzzleFor(TODAY).map((p) => p.a);
+// BACKEND=turso runs the same suite against the Turso HTTP client (via a protocol mock).
+const BACKEND = process.env.BACKEND || "sqlite";
 
 before(async () => {
-  server = createServer({ dbPath: ":memory:" });
+  if (BACKEND === "turso") {
+    turso = await mockTurso("secret-token");
+    server = createServer({ tursoUrl: turso.url.replace("http://", "libsql://"), tursoToken: "secret-token", fetchImpl: turso.fetch });
+  } else {
+    server = createServer({ dbPath: ":memory:" });
+  }
   await new Promise((r) => server.listen(0, r));
   base = `http://127.0.0.1:${server.address().port}`;
 });
-after(() => new Promise((r) => server.close(r)));
+after(async () => {
+  await new Promise((r) => server.close(r));
+  if (turso) await turso.close();
+});
 
 const post = (path, body, headers = { "Content-Type": "application/json" }) =>
   fetch(base + path, { method: "POST", headers, body: typeof body === "string" ? body : JSON.stringify(body) });

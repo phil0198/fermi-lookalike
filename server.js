@@ -3,15 +3,17 @@
  * Ballpark server: serves the static site and records guesses so the
  * "how everyone guessed" charts use real player data.
  *
- *   PORT     (default 3000)
- *   DB_PATH  (default ./data/ballpark.db; use ":memory:" for tests)
+ *   PORT                (default 3000)
+ *   TURSO_DATABASE_URL  hosted libSQL database (free tier); when set, guesses go there
+ *   TURSO_AUTH_TOKEN    its auth token
+ *   DB_PATH             local SQLite file otherwise (default ./data/ballpark.db; ":memory:" for tests)
  *
  * No dependencies; requires Node >= 22.5 for node:sqlite.
  */
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
-const { DatabaseSync } = require("node:sqlite");
+const { openStore } = require("./store.js");
 const Puzzle = require("./js/puzzle.js");
 
 const ROOT = __dirname;
@@ -19,35 +21,6 @@ const HIST_BINS = 21;
 const Q_RANGE = [-1, 1]; // per-question histogram: answer/10 .. answer*10 (log10 offsets)
 const DAY_RANGE = [0, 3]; // daily score histogram: 1x .. 1,000x (log10)
 const MAX_BODY = 2048;
-
-/* ---------------- Database ---------------- */
-function openDb(file) {
-  if (file !== ":memory:") fs.mkdirSync(path.dirname(file), { recursive: true });
-  const db = new DatabaseSync(file);
-  db.exec(`
-    PRAGMA journal_mode = WAL;
-    CREATE TABLE IF NOT EXISTS guesses (
-      day        INTEGER NOT NULL,
-      q          INTEGER NOT NULL,
-      player     TEXT    NOT NULL,
-      guess      REAL    NOT NULL,
-      offset     REAL    NOT NULL,   -- log10(guess / answer)
-      created_at INTEGER NOT NULL,
-      PRIMARY KEY (day, q, player)
-    );
-    CREATE INDEX IF NOT EXISTS guesses_day ON guesses (day, q);
-  `);
-  return {
-    // First guess wins: a player can't overwrite an earlier answer.
-    insert: db.prepare("INSERT OR IGNORE INTO guesses (day, q, player, guess, offset, created_at) VALUES (?, ?, ?, ?, ?, ?)"),
-    offsets: db.prepare("SELECT player, offset FROM guesses WHERE day = ? AND q = ?"),
-    dayScores: db.prepare(`
-      SELECT player, AVG(ABS(offset)) AS score
-      FROM guesses WHERE day = ?
-      GROUP BY player HAVING COUNT(*) = ${Puzzle.PER_DAY}`),
-    close: () => db.close(),
-  };
-}
 
 /* ---------------- Stats ---------------- */
 function histogram(values, [lo, hi]) {
@@ -59,8 +32,8 @@ function histogram(values, [lo, hi]) {
   return bins;
 }
 
-function questionStats(db, day, q, player) {
-  const rows = db.offsets.all(day, q);
+async function questionStats(db, day, q, player) {
+  const rows = await db.offsets(day, q);
   const mine = rows.find((r) => r.player === player);
   const others = rows.filter((r) => r.player !== player);
   const out = { count: rows.length, range: Q_RANGE, bins: histogram(rows.map((r) => r.offset), Q_RANGE) };
@@ -73,8 +46,8 @@ function questionStats(db, day, q, player) {
   return out;
 }
 
-function dayStats(db, day, player) {
-  const rows = db.dayScores.all(day);
+async function dayStats(db, day, player) {
+  const rows = await db.dayScores(day);
   const mine = rows.find((r) => r.player === player);
   const out = { count: rows.length, range: DAY_RANGE, bins: histogram(rows.map((r) => r.score), DAY_RANGE) };
   if (mine) {
@@ -113,7 +86,7 @@ function validGuess(v) {
 
 function record(db, day, q, player, guess) {
   const answer = Puzzle.puzzleFor(day)[q].a;
-  db.insert.run(day, q, player, guess, Math.log10(guess / answer), Date.now());
+  return db.insert(day, q, player, guess, Math.log10(guess / answer), Date.now());
 }
 
 /* ---------------- Rate limiting (per IP, in memory) ---------------- */
@@ -219,24 +192,25 @@ async function handleApi(req, res, url, db) {
     case "POST /api/guess": {
       const body = await readJson(req);
       const day = validDay(body.day), q = validQ(body.q), player = validPlayer(body.player), guess = validGuess(body.guess);
-      record(db, day, q, player, guess);
-      return sendJson(res, 200, questionStats(db, day, q, player));
+      await record(db, day, q, player, guess);
+      return sendJson(res, 200, await questionStats(db, day, q, player));
     }
     // Record all of a player's guesses for a day (idempotent sync); returns day + per-question stats.
     case "POST /api/day": {
       const body = await readJson(req);
       const day = validDay(body.day), player = validPlayer(body.player);
       if (!Array.isArray(body.guesses) || body.guesses.length > Puzzle.PER_DAY) throw new HttpError(400, "invalid guesses");
-      body.guesses.forEach((g, q) => { if (g != null) record(db, day, q, player, validGuess(g)); });
+      const guesses = body.guesses.map((g) => (g == null ? null : validGuess(g)));
+      for (const [q, g] of guesses.entries()) if (g != null) await record(db, day, q, player, g);
       return sendJson(res, 200, {
-        day: dayStats(db, day, player),
-        questions: [0, 1, 2].map((q) => questionStats(db, day, q, player)),
+        day: await dayStats(db, day, player),
+        questions: await Promise.all([0, 1, 2].map((q) => questionStats(db, day, q, player))),
       });
     }
     case "GET /api/question": {
       const day = validDay(url.searchParams.get("day")), q = validQ(url.searchParams.get("q"));
       const player = url.searchParams.get("player") || "";
-      return sendJson(res, 200, questionStats(db, day, q, player));
+      return sendJson(res, 200, await questionStats(db, day, q, player));
     }
     case "GET /api/health":
       return sendJson(res, 200, { ok: true, today: Puzzle.today() });
@@ -245,8 +219,18 @@ async function handleApi(req, res, url, db) {
   }
 }
 
-function createServer({ dbPath = process.env.DB_PATH || path.join(ROOT, "data", "ballpark.db"), trustProxy = !!process.env.TRUST_PROXY } = {}) {
-  const db = openDb(dbPath);
+function createServer({
+  dbPath = process.env.DB_PATH || path.join(ROOT, "data", "ballpark.db"),
+  tursoUrl = process.env.TURSO_DATABASE_URL,
+  tursoToken = process.env.TURSO_AUTH_TOKEN,
+  fetchImpl,
+  trustProxy = !!process.env.TRUST_PROXY,
+} = {}) {
+  const db = openStore({ dbPath, tursoUrl, tursoToken, perDay: Puzzle.PER_DAY, fetchImpl });
+  db.ready.then(
+    () => console.log(`Storage: ${db.kind === "turso" ? "Turso" : "local SQLite at " + dbPath}`),
+    (err) => console.error("Storage failed to initialise:", err.message)
+  );
   const allow = rateLimiter();
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://localhost");

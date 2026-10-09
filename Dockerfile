@@ -1,6 +1,6 @@
 FROM node:22-alpine
 WORKDIR /app
-COPY package.json server.js index.html ./
+COPY package.json server.js store.js index.html ./
 COPY css ./css
 COPY js ./js
 # The server starts as root only to take ownership of the mounted /data volume,

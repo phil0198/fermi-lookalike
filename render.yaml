@@ -1,18 +1,17 @@
-# Render Blueprint: New > Blueprint > pick this repo.
-# A persistent disk keeps the SQLite database across deploys and restarts.
-# Disks need a paid instance type (starter is the smallest).
+# Render Blueprint (free): New > Blueprint > pick this repo.
+# Guesses are stored in a free Turso database, because free Render
+# instances have no persistent disk. Render asks for the two Turso
+# values when you create the Blueprint.
 services:
   - type: web
     name: ballpark
     runtime: docker
-    plan: starter
+    plan: free
     healthCheckPath: /api/health
     envVars:
-      - key: DB_PATH
-        value: /data/ballpark.db
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false
       - key: TRUST_PROXY
         value: "1"
-    disk:
-      name: ballpark-data
-      mountPath: /data
-      sizeGB: 1
