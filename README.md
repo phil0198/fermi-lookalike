@@ -50,6 +50,7 @@ The front end still works without the server: `python3 -m http.server`, or GitHu
 
 ## Features
 
+- **Home screen.** "Just ballpark it." explains the game in three steps with a worked example. Its button reads *Play today's puzzle*, *Continue*, or *See today's results*, depending on progress. Clicking the Ballpark name returns to it.
 - **Daily puzzle.** It changes at midnight Eastern Time and draws 3 questions from 3 different categories. Everyone gets the same puzzle. The bank has 240 questions in 10 categories, and none repeats until all of them have been used (80 days).
 - **Accounts (optional).** Sign up with a username and password to save your stats and history on the server, so they follow you to any device. Anything you played before signing up is carried into the account.
 - **Flexible input.** The guess box accepts shorthand (`2.5k`, `40m`, `1.2b`) and arithmetic (`365*24`, `(12+3)*1k`). There's also a built-in scratchpad calculator.

@@ -233,7 +233,7 @@
   let game = db.games[day] || { guesses: [] };
   // view: {mode: "question"|"reveal"|"summary", i}
   const viewFor = (g) => (g.guesses.length >= PER_DAY ? { mode: "summary" } : { mode: "question", i: g.guesses.length });
-  let view = viewFor(game);
+  let view = qs.has("day") ? viewFor(game) : { mode: "home" };
   let account = null; // {user, player, history, stats} when signed in
 
   // Re-read today's game after an account sign-in/out changed what's stored.
@@ -250,7 +250,7 @@
     $("#puzzleNo").textContent = `No. ${pad3(day)}`;
     const steps = $("#steps");
     steps.replaceChildren(...puzzle.map((p, i) => {
-      const active = view.mode === "summary" || i <= (view.i ?? 0) || game.guesses[i] != null;
+      const active = view.mode === "summary" || (view.mode !== "home" && i <= (view.i ?? 0)) || game.guesses[i] != null;
       return h("li", { class: "step" + (active ? " on" : ""), title: CATS[p.cat].label },
         h("span", { class: "step-q" }, `Q${i + 1}`), icon(CATS[p.cat].icon));
     }));
@@ -570,9 +570,45 @@
     body.classList.add("enter");
     render();
   }
+  /* ---------------- Home ---------------- */
+  function renderHome() {
+    const answered = game.guesses.length;
+    const done = answered >= PER_DAY;
+    const cta = done ? "See today's results" : answered ? `Continue · Question ${answered + 1}` : "Play today's puzzle";
+    const play = h("button", { class: "pill pill-white home-cta", type: "button", onclick: () => go(viewFor(game)) },
+      cta, h("span", { "aria-hidden": "true" }, " →"));
+    const step = (n, title, text) => h("li", { class: "home-step" },
+      h("span", { class: "home-num", "aria-hidden": "true" }, n), h("b", {}, title), h("p", {}, text));
+    $("#body").replaceChildren(
+      h("div", { class: "home" },
+        h("p", { class: "eyebrow" }, "The daily estimation game"),
+        h("h1", { class: "home-title" }, "Just ballpark it."),
+        h("p", { class: "home-lede" },
+          "Three questions, each with a real number for an answer. You won't know them exactly, and you don't need to. ",
+          "Break each one into things you do know, make your best guess, and see how close you land."),
+        h("div", { class: "home-actions" }, play,
+          h("p", { class: "home-meta" }, `No. ${pad3(day)} · ${prettyDate(dateOf(day))}`, h("br"), h("span", { id: "homeCountdown" }))),
+        h("ol", { class: "home-steps" },
+          step("1", "Three questions a day", "Each from a different category, the same for everyone. New ones at midnight Eastern."),
+          step("2", "One guess each", "Type a number. Shorthand like 2.5k or 40m works, and so does math like 365*24."),
+          step("3", "Scored in “×”", "Guess 50 when the answer is 100 and you're 2× too low. Your day's score blends all three. Closer to 1× is better.")),
+        h("div", { class: "home-example" },
+          h("p", { class: "eyebrow" }, "For example"),
+          h("p", { class: "home-ex-q" }, "How many keys are on a standard piano?"),
+          h("div", { class: "home-ex-row" },
+            h("span", {}, h("small", {}, "You guess"), h("b", {}, "100")),
+            h("span", {}, h("small", {}, "Answer"), h("b", {}, "88")),
+            h("span", { class: "home-ex-x" }, h("small", {}, "You landed"), h("b", {}, "1.14× too high"))),
+          h("p", { class: "home-ex-napkin" }, "Napkin math: about 7 octaves of 12 keys is 84, plus a few at the ends.")))
+    );
+    tickCountdown();
+    requestAnimationFrame(() => play.focus({ preventScroll: true }));
+  }
+
   function render() {
     renderHead();
-    if (view.mode === "question") renderQuestion(view.i);
+    if (view.mode === "home") renderHome();
+    else if (view.mode === "question") renderQuestion(view.i);
     else if (view.mode === "reveal") renderReveal(view.i);
     else renderSummary();
   }
@@ -891,10 +927,17 @@
     const mm = String(Math.floor((left % 3600) / 60)).padStart(2, "0");
     const ss = String(left % 60).padStart(2, "0");
     $("#countdown").textContent = dayIndex(etDate()) > TODAY ? "New puzzle ready. Refresh!" : `Next puzzle in ${hh}:${mm}:${ss}`;
+    const hc = document.getElementById("homeCountdown");
+    if (hc) hc.textContent = $("#countdown").textContent;
   }
 
   /* ---------------- Wire up ---------------- */
   $("#menuBtn").addEventListener("click", openDrawer);
+  document.querySelector(".card-head .brand").addEventListener("click", (e) => {
+    if (day !== TODAY) return; // archive pages: the link goes back to today's home
+    e.preventDefault();
+    go({ mode: "home" });
+  });
   $("#archiveBtn").addEventListener("click", openDrawer);
   $("#drawerClose").addEventListener("click", closeDrawer);
   $("#scrim").addEventListener("click", closeDrawer);
@@ -917,9 +960,5 @@
   tickCountdown();
   setInterval(tickCountdown, 1000);
 
-  if (!db.seenHelp) {
-    db.seenHelp = true;
-    store.save(db);
-    $("#helpModal").showModal();
-  }
+
 })();

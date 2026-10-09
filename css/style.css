@@ -208,6 +208,42 @@ code {
   opacity: 0.85;
 }
 
+/* ---------- Home ---------- */
+.card[data-mode="home"] .steps { visibility: hidden; }
+.home-title {
+  margin: 6px 0 22px;
+  font-size: clamp(56px, 10vw, 128px);
+  line-height: 0.92;
+  font-weight: 900;
+  letter-spacing: -0.05em;
+  text-wrap: balance;
+}
+.home-lede { margin: 0 0 40px; max-width: 34ch; font-size: clamp(19px, 2.2vw, 26px); line-height: 1.4; font-weight: 600; opacity: 0.92; }
+.home-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 18px 28px; margin-bottom: 56px; }
+.home-meta { margin: 0; font-weight: 700; font-size: 16px; line-height: 1.5; opacity: 0.8; font-variant-numeric: tabular-nums; }
+.home-steps { list-style: none; margin: 0 0 28px; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.home-step { background: var(--q-dim); border-radius: 24px; padding: 24px 24px 22px; }
+.home-num {
+  display: inline-grid; place-items: center;
+  width: 34px; height: 34px; border-radius: 50%;
+  background: var(--hl); color: var(--hl-ink);
+  font-weight: 900; font-size: 16px; margin-bottom: 14px;
+}
+.home-step b { display: block; font-size: 20px; letter-spacing: -0.01em; margin-bottom: 6px; }
+.home-step p { margin: 0; font-size: 16px; line-height: 1.5; opacity: 0.88; }
+.home-example {
+  border: 2px dashed color-mix(in srgb, var(--q-ink) 40%, transparent);
+  border-radius: 24px;
+  padding: 22px 24px;
+}
+.home-ex-q { margin: 0 0 14px; font-size: 22px; font-weight: 800; letter-spacing: -0.01em; }
+.home-ex-row { display: flex; flex-wrap: wrap; gap: 12px 36px; }
+.home-ex-row span { display: flex; flex-direction: column; }
+.home-ex-row small { font-size: 12px; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase; opacity: 0.75; }
+.home-ex-row b { font-size: 28px; font-weight: 900; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.home-ex-x b { color: var(--hl); }
+.home-ex-napkin { margin: 14px 0 0; font-size: 16px; line-height: 1.5; opacity: 0.85; }
+
 /* ---------- Question ---------- */
 .question {
   margin: 0 0 64px;
@@ -750,8 +786,17 @@ button.unit:hover { background: color-mix(in srgb, var(--q-ink) 14%, transparent
   .summary { grid-template-columns: 1fr; gap: 40px; }
 }
 
+@media (max-width: 900px) {
+  .home-steps { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 640px) {
   :root { --radius-card: 28px; }
+  .home-lede { margin-bottom: 28px; }
+  .home-actions { margin-bottom: 32px; }
+  .home-cta { width: 100%; }
+  .home-step { padding: 18px 18px 16px; border-radius: 18px; }
+  .home-ex-row b { font-size: 22px; }
   .page { padding: 12px 12px 24px; gap: 12px; }
   .topbar { min-height: 44px; }
   .avatar { width: 44px; height: 44px; font-size: 18px; }
