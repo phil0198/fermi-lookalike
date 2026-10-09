@@ -17,7 +17,7 @@
 })(typeof self !== "undefined" ? self : this, function (bank) {
   "use strict";
 
-  const LAUNCH = "2026-10-09"; // Puzzle No. 001
+  const LAUNCH = "2026-10-08"; // Puzzle No. 001
   const TZ = "America/New_York";
   const PER_DAY = 3;
   const CATS = bank.categories;
