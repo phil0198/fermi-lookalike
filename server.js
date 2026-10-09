@@ -271,7 +271,31 @@ function createServer({ dbPath = process.env.DB_PATH || path.join(ROOT, "data", 
 
 module.exports = { createServer };
 
+// In a container we start as root only so a freshly mounted (root-owned) volume
+// can be handed to RUN_AS; then we drop privileges before opening the database.
+function dropPrivileges(dbPath) {
+  const user = process.env.RUN_AS;
+  if (!user || typeof process.getuid !== "function" || process.getuid() !== 0) return;
+  const { execFileSync } = require("node:child_process");
+  const uid = Number(execFileSync("id", ["-u", user]).toString().trim());
+  const gid = Number(execFileSync("id", ["-g", user]).toString().trim());
+  const dir = path.dirname(dbPath);
+  fs.mkdirSync(dir, { recursive: true });
+  for (const f of [dir, ...fs.readdirSync(dir).map((n) => path.join(dir, n))]) fs.chownSync(f, uid, gid);
+  process.setgid(gid);
+  process.setuid(uid);
+}
+
 if (require.main === module) {
   const port = Number(process.env.PORT) || 3000;
-  createServer().listen(port, () => console.log(`Ballpark running at http://localhost:${port}`));
+  dropPrivileges(process.env.DB_PATH || path.join(ROOT, "data", "ballpark.db"));
+  const server = createServer().listen(port, () => console.log(`Ballpark running at http://localhost:${port}`));
+  // Hosts stop containers with SIGTERM; close the database cleanly so the WAL is checkpointed.
+  for (const sig of ["SIGTERM", "SIGINT"]) {
+    process.on(sig, () => {
+      server.close(() => process.exit(0));
+      server.closeAllConnections();
+      setTimeout(() => process.exit(0), 5000).unref();
+    });
+  }
 }

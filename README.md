@@ -20,12 +20,26 @@ npm test           # API + static-serving tests
 | `DB_PATH` | `./data/ballpark.db` | SQLite file (created automatically) |
 | `TRUST_PROXY` | unset | Set when running behind a reverse proxy, so rate limiting uses `X-Forwarded-For` |
 
+### Deploy (public website)
+
+The repo includes a [Render](https://render.com) Blueprint (`render.yaml`):
+
+1. Push this repo to GitHub.
+2. In Render, choose **New → Blueprint** and pick the repo. Render builds the `Dockerfile` and attaches a 1 GB disk at `/data` for the database.
+3. When the deploy finishes, the game is live at `https://ballpark-xxxx.onrender.com`. To use your own domain, go to **Settings → Custom Domains**.
+
+The disk needs a paid instance (Starter, about $7/month). On a free instance the database is wiped every time the service restarts or redeploys.
+
+Any host that runs a Dockerfile with a persistent volume works the same way, for example Railway or Fly.io. Mount the volume at `/data`, and set `TRUST_PROXY=1` when the host puts a proxy in front of the app.
+
 ### Docker
 
 ```sh
 docker build -t ballpark .
 docker run -p 3000:3000 -v ballpark-data:/data ballpark
 ```
+
+The container starts as root only to take ownership of the mounted volume, then switches to the unprivileged `node` user before opening the database.
 
 ### Static-only
 

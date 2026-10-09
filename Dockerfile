@@ -3,8 +3,9 @@ WORKDIR /app
 COPY package.json server.js index.html ./
 COPY css ./css
 COPY js ./js
-ENV PORT=3000 DB_PATH=/data/ballpark.db
-VOLUME /data
+# The server starts as root only to take ownership of the mounted /data volume,
+# then switches to RUN_AS before opening the database.
+ENV NODE_ENV=production PORT=3000 DB_PATH=/data/ballpark.db RUN_AS=node
+RUN mkdir -p /data && chown node:node /data
 EXPOSE 3000
-USER node
 CMD ["node", "--disable-warning=ExperimentalWarning", "server.js"]

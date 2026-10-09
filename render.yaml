@@ -1,0 +1,18 @@
+# Render Blueprint: New > Blueprint > pick this repo.
+# A persistent disk keeps the SQLite database across deploys and restarts.
+# Disks need a paid instance type (starter is the smallest).
+services:
+  - type: web
+    name: ballpark
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: DB_PATH
+        value: /data/ballpark.db
+      - key: TRUST_PROXY
+        value: "1"
+    disk:
+      name: ballpark-data
+      mountPath: /data
+      sizeGB: 1
