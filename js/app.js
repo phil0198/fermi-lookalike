@@ -1,14 +1,13 @@
 (() => {
   "use strict";
 
-  const CATS = window.BALLPARK_CATEGORIES;
-  const BANK = window.BALLPARK_QUESTIONS;
-  const CAT_KEYS = Object.keys(CATS);
-  const LAUNCH = "2026-01-01"; // Puzzle No. 001
-  const TZ = "America/New_York";
+  const Puzzle = window.BallparkPuzzle;
+  const { CATS, PER_DAY, TZ, etDate, dayIndex, dateOf, rng, puzzleFor } = Puzzle;
   const STORE_KEY = "ballpark:v2";
-  const PER_DAY = 3;
-  const CROWD = 1500; // simulated players per question (no backend)
+  const CROWD = 1500; // simulated players per question, used only when the server is unreachable
+  const HIST_BINS = 21;
+  const Q_RANGE = [-1, 1]; // answer/10 .. answer*10 (log10 offsets)
+  const DAY_RANGE = [0, 3]; // 1x .. 1,000x (log10)
 
   /* ---------------- Storage ---------------- */
   const store = {
@@ -19,58 +18,63 @@
     save(d) { try { localStorage.setItem(STORE_KEY, JSON.stringify(d)); } catch { /* private mode */ } },
   };
   const db = store.load();
+  if (!db.player) {
+    db.player = crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+    store.save(db);
+  }
 
-  /* ---------------- Dates (Eastern Time) ---------------- */
-  const etDate = (d = new Date()) =>
-    new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
-  const dayIndex = (s) => Math.round((Date.parse(s + "T00:00:00Z") - Date.parse(LAUNCH + "T00:00:00Z")) / 864e5) + 1;
-  const dateOf = (n) => new Date(Date.parse(LAUNCH + "T00:00:00Z") + (n - 1) * 864e5).toISOString().slice(0, 10);
+  /* ---------------- Dates ---------------- */
   const prettyDate = (s) => new Date(s + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
   const pad3 = (n) => String(n).padStart(3, "0");
-  const TODAY = Math.max(1, dayIndex(etDate()));
+  const TODAY = Puzzle.today();
 
-  /* ---------------- Seeded randomness ---------------- */
-  function rng(seed) {
-    return () => {
-      seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
-      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-  function shuffle(arr, rand) {
-    const a = arr.slice();
-    for (let i = a.length - 1; i > 0; i--) {
-      const j = Math.floor(rand() * (i + 1));
-      [a[i], a[j]] = [a[j], a[i]];
+  /* ---------------- Server API ---------------- */
+  // Resolves to the parsed JSON, or null if the server is unreachable (e.g. static hosting).
+  async function api(path, body) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 4000);
+    try {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...body, player: db.player }),
+        signal: ctrl.signal,
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
     }
-    return a;
   }
+
   function gauss(rand) {
     return Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
   }
 
-  /* ---------------- Daily puzzle ---------------- */
-  function puzzleFor(day) {
-    const cats = shuffle(CAT_KEYS, rng(day * 7919 + 1)).slice(0, PER_DAY);
-    return cats.map((cat) => {
-      const list = BANK[cat];
-      // Fixed shuffled order per category, walked one step per day, so repeats are rare.
-      const order = shuffle(list.map((_, i) => i), rng(cat.length * 104729 + cat.charCodeAt(1)));
-      return { cat, ...list[order[(day + cat.charCodeAt(0)) % list.length]] };
-    });
-  }
-
-  /* Simulated crowd: log10(guess/answer) offsets for each question. */
+  /* Simulated crowd (offline fallback only): log10(guess/answer) offsets per question. */
   function crowdFor(day, i) {
     const rand = rng(day * 1009 + i * 31 + 7);
     const bias = (rand() - 0.6) * 0.7; // crowds tend to underestimate
     const spread = 0.45 + rand() * 0.25;
     return Array.from({ length: CROWD }, () => bias + gauss(rand) * spread);
   }
-  function crowdScores(day) {
+  function simQuestion(day, i, off) {
+    const crowd = crowdFor(day, i);
+    return {
+      simulated: true, count: crowd.length, range: Q_RANGE, bins: binCounts(crowd, Q_RANGE),
+      closerThan: Math.round((crowd.filter((c) => Math.abs(c) > Math.abs(off)).length / crowd.length) * 100),
+    };
+  }
+  function simDay(day, score) {
     const per = [0, 1, 2].map((i) => crowdFor(day, i));
-    return per[0].map((_, k) => Math.pow(10, (Math.abs(per[0][k]) + Math.abs(per[1][k]) + Math.abs(per[2][k])) / 3));
+    const logs = per[0].map((_, k) => (Math.abs(per[0][k]) + Math.abs(per[1][k]) + Math.abs(per[2][k])) / 3);
+    const mine = Math.log10(score);
+    return {
+      simulated: true, count: logs.length, range: DAY_RANGE, bins: binCounts(logs, DAY_RANGE),
+      top: Math.max(1, Math.ceil((logs.filter((c) => c <= mine).length / logs.length) * 100)),
+    };
   }
 
   /* ---------------- Scoring ---------------- */
@@ -273,30 +277,29 @@
   }
 
   /* ---------------- Histograms ---------------- */
-  // values: log10 offsets; [lo, hi]: range; returns bar heights normalized 0..1
-  function bins(values, lo, hi, n) {
-    const counts = new Array(n).fill(0);
-    for (const v of values) {
-      const k = Math.floor(((v - lo) / (hi - lo)) * n);
-      if (k >= 0 && k < n) counts[k]++;
-    }
-    const max = Math.max(1, ...counts);
-    return counts.map((c) => c / max);
+  // Same binning as the server: outliers are clamped into the end bins.
+  function binCounts(values, [lo, hi]) {
+    const counts = new Array(HIST_BINS).fill(0);
+    for (const v of values) counts[Math.min(HIST_BINS - 1, Math.max(0, Math.floor(((v - lo) / (hi - lo)) * HIST_BINS)))]++;
+    return counts;
   }
   const pct = (v, lo, hi) => Math.min(100, Math.max(0, ((v - lo) / (hi - lo)) * 100));
 
-  function histogram({ values, lo, hi, n, you, mark, labels, cls }) {
-    const heights = bins(values, lo, hi, n);
+  function histogram({ bins, range: [lo, hi], you, mark, labels, cls }) {
+    const max = Math.max(1, ...bins);
+    const at = pct(you, lo, hi);
     return h("div", { class: "hist " + (cls || "") },
       h("div", { class: "hist-plot" },
-        heights.map((v) => h("span", { class: "bar", style: `--h:${Math.max(0.015, v)}` })),
+        bins.map((c) => h("span", { class: "bar", style: `--h:${Math.max(0.015, c / max)}` })),
         mark != null ? h("span", { class: "hist-mark", style: `left:${pct(mark, lo, hi)}%` }) : null,
-        h("span", { class: "hist-you" + (pct(you, lo, hi) > 85 ? " edge-r" : pct(you, lo, hi) < 15 ? " edge-l" : ""), style: `left:${pct(you, lo, hi)}%` }, h("b", {}, "You"))
+        h("span", { class: "hist-you" + (at > 85 ? " edge-r" : at < 15 ? " edge-l" : ""), style: `left:${at}%` }, h("b", {}, "You"))
       ),
       h("div", { class: "hist-axis" }, labels.map(([v, text, sub]) =>
         h("span", { style: `left:${pct(v, lo, hi)}%` }, text, sub ? h("small", {}, sub) : null)))
     );
   }
+  const crowdNote = (st) => st.simulated ? "simulated" : `${st.count.toLocaleString("en-US")} ${st.count === 1 ? "player" : "players"}`;
+  const skeleton = (cls) => h("div", { class: "hist loading " + (cls || "") }, h("div", { class: "hist-plot" }), h("div", { class: "hist-axis" }));
 
   /* ---------------- Reveal view ---------------- */
   function renderReveal(i) {
@@ -304,10 +307,23 @@
     const g = game.guesses[i];
     const off = Math.log10(g / p.a);
     const r = ratio(g, p.a);
-    const crowd = crowdFor(day, i);
-    const beat = Math.round((crowd.filter((c) => Math.abs(c) > Math.abs(off)).length / crowd.length) * 100);
     const spot = r < 1.005;
     const last = i === PER_DAY - 1;
+
+    const landedSub = h("p", { class: "landed-sub" }, "\u00a0");
+    const note = h("span", { class: "note" });
+    const chart = skeleton();
+
+    api("/api/guess", { day, q: i, guess: g }).then((st) => {
+      if (!chart.isConnected) return; // player moved on
+      st = st || simQuestion(day, i, off);
+      landedSub.textContent = st.closerThan == null ? "first to answer this one!" : `closer than ${st.closerThan}% of players`;
+      note.textContent = `· ${crowdNote(st)}`;
+      chart.replaceWith(histogram({
+        bins: st.bins, range: st.range, you: off, mark: 0,
+        labels: [[-1, compact(p.a / 10)], [0, compact(p.a), "Answer"], [1, compact(p.a * 10)]],
+      }));
+    });
 
     const napkin = h("details", { class: "napkin" },
       h("summary", {}, h("span", {}, "Napkin math"), h("svg", { class: "chev", viewBox: "0 0 24 24", "aria-hidden": "true", html: '<path d="m6 15 6-6 6 6"/>' })),
@@ -327,14 +343,11 @@
           h("p", { class: "eyebrow" }, "You landed"),
           h("p", { class: "landed-x" }, spot ? "Spot" : fmtX(r)),
           h("p", { class: "landed-dir" }, spot ? "On!" : off > 0 ? "Too High" : "Too Low"),
-          h("p", { class: "landed-sub" }, `closer than ${beat}% of players`)
+          landedSub
         ),
         h("div", { class: "everyone" },
-          h("p", { class: "eyebrow" }, "How everyone guessed"),
-          histogram({
-            values: crowd, lo: -1, hi: 1, n: 21, you: off, mark: 0,
-            labels: [[-1, compact(p.a / 10)], [0, compact(p.a), "Answer"], [1, compact(p.a * 10)]],
-          })
+          h("p", { class: "eyebrow" }, "How everyone guessed ", note),
+          chart
         )
       ),
       h("div", { class: "row-between foot" }, napkin, next)
@@ -345,9 +358,21 @@
   /* ---------------- Summary view ---------------- */
   function renderSummary() {
     const score = dayScore(game.guesses, puzzle);
-    const crowd = crowdScores(day);
-    const top = Math.max(1, Math.ceil((crowd.filter((c) => c <= score).length / crowd.length) * 100));
-    const logCrowd = crowd.map((c) => Math.log10(c));
+    const tag = h("span", { class: "tag" }, "\u00a0");
+    const note = h("span", { class: "note" });
+    const chart = skeleton("dark");
+
+    // Also re-syncs any guesses that failed to send earlier (the server ignores duplicates).
+    api("/api/day", { day, guesses: game.guesses }).then((res) => {
+      if (!chart.isConnected) return;
+      const st = res ? res.day : simDay(day, score);
+      tag.textContent = st.count <= 1 ? "First to finish!" : `Top ${st.top}%`;
+      note.textContent = `· ${crowdNote(st)}`;
+      chart.replaceWith(histogram({
+        bins: st.bins, range: st.range, you: Math.log10(score), cls: "dark",
+        labels: [[0, "1×"], [1, "10×"], [2, "100×"], [3, "1,000×"]],
+      }));
+    });
 
     const rows = puzzle.map((p, i) => {
       const g = game.guesses[i];
@@ -361,12 +386,9 @@
         h("div", { class: "sum-left" },
           h("p", { class: "label" }, "Score"),
           h("p", { class: "score" }, fmtX(score)),
-          h("span", { class: "tag" }, `Top ${top}%`),
-          h("p", { class: "label" }, "How everyone did"),
-          histogram({
-            values: logCrowd, lo: 0, hi: 3, n: 21, you: Math.log10(score), cls: "dark",
-            labels: [[0, "1×"], [1, "10×"], [2, "100×"], [3, "1,000×"]],
-          }),
+          tag,
+          h("p", { class: "label" }, "How everyone did ", note),
+          chart,
           h("div", { class: "actions" },
             h("button", { class: "pill pill-dark", type: "button", onclick: shareCard }, "Share card"),
             h("button", { class: "pill pill-outline-dark", type: "button", onclick: copyText }, "Copy text"))

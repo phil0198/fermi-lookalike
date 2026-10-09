@@ -4,7 +4,7 @@
  * scoring is ratio-based so small source disagreements barely matter.
  * `napkin` is a back-of-the-envelope route to the answer.
  */
-window.BALLPARK_CATEGORIES = {
+var BALLPARK_CATEGORIES = {
   body: { label: "Human Body", icon: "drop" },
   landmarks: { label: "Landmarks", icon: "building" },
   animals: { label: "Animals", icon: "paw" },
@@ -15,7 +15,7 @@ window.BALLPARK_CATEGORIES = {
   geography: { label: "Geography", icon: "globe" },
 };
 
-window.BALLPARK_QUESTIONS = {
+var BALLPARK_QUESTIONS = {
   body: [
     { q: "How many liters of blood does an adult heart pump in one day?", unit: "liters", a: 7200,
       napkin: "Each beat pushes about 70 ml. At 70 beats a minute that's ~5 L per minute. A day has 1,440 minutes, so 5 × 1,440 ≈ 7,200 L." },
@@ -129,3 +129,10 @@ window.BALLPARK_QUESTIONS = {
       napkin: "There are ~2,000 thunderstorms active at any moment, each flashing a couple of times a minute. 2,000 × 1.3 ÷ 60 ≈ 45 per second." },
   ],
 };
+
+if (typeof module === "object" && module.exports) {
+  module.exports = { categories: BALLPARK_CATEGORIES, questions: BALLPARK_QUESTIONS };
+} else {
+  window.BALLPARK_CATEGORIES = BALLPARK_CATEGORIES;
+  window.BALLPARK_QUESTIONS = BALLPARK_QUESTIONS;
+}
