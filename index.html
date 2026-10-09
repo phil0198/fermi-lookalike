@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ballpark — The Daily Estimation Game</title>
+  <meta name="description" content="Three estimation questions a day. One guess each. How close can you get?" />
+  <meta name="theme-color" content="#e8e4dc" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='16' fill='%23eb6a4a'/><text x='32' y='45' font-family='Arial' font-weight='900' font-size='34' text-anchor='middle' fill='white'>×</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <main class="page">
+    <section class="card" id="card" data-mode="question">
+      <header class="card-head">
+        <div class="head-left">
+          <button class="menu-btn" id="menuBtn" aria-label="Open menu" aria-controls="drawer" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+          </button>
+          <a class="brand" href="./">Ballpark</a>
+        </div>
+        <ol class="steps" id="steps" aria-label="Questions"></ol>
+        <div class="puzzle-no" id="puzzleNo">No. 001</div>
+      </header>
+
+      <div class="card-body" id="body" aria-live="polite"></div>
+    </section>
+
+    <nav class="below">
+      <button class="link" id="helpBtn" type="button">How to play</button>
+      <span aria-hidden="true">·</span>
+      <button class="link" id="statsBtn" type="button">Stats</button>
+      <span aria-hidden="true">·</span>
+      <button class="link" id="archiveBtn" type="button">Archive</button>
+      <span class="countdown" id="countdown"></span>
+    </nav>
+  </main>
+
+  <!-- Archive drawer -->
+  <div class="scrim" id="scrim" hidden></div>
+  <aside class="drawer" id="drawer" aria-label="Menu" aria-hidden="true" inert>
+    <div class="drawer-head">
+      <span class="brand">Ballpark</span>
+      <button class="icon-btn" id="drawerClose" aria-label="Close menu">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <p class="eyebrow">Archive</p>
+    <ol class="archive-list" id="archiveList"></ol>
+  </aside>
+
+  <!-- How to play -->
+  <dialog class="modal" id="helpModal">
+    <form method="dialog" class="modal-inner">
+      <p class="eyebrow">How to play</p>
+      <h2>Three questions.<br />One guess each.</h2>
+      <p>Every answer is a number. You won't know it exactly, and that's the point. Break the problem into pieces you <em>do</em> know and multiply your way to an estimate.</p>
+      <p>Each guess is scored by <strong>how many times off</strong> it was. Guessing 50 when the answer is 100 is <strong>2× too low</strong>, the same as guessing 200 is <strong>2× too high</strong>.</p>
+      <p>Your daily score combines all three (a geometric mean). <strong>Lower is better</strong>, and 1.00× is perfect.</p>
+      <p class="muted">Shorthand and math both work: <code>2.5k</code>, <code>40m</code>, <code>1.2b</code>, <code>365*24</code>.</p>
+      <button class="pill pill-solid" value="close">Got it</button>
+    </form>
+  </dialog>
+
+  <!-- Stats -->
+  <dialog class="modal" id="statsModal">
+    <form method="dialog" class="modal-inner">
+      <p class="eyebrow">Your stats</p>
+      <div class="stat-grid" id="statGrid"></div>
+      <button class="pill pill-solid" value="close">Close</button>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="js/questions.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
