@@ -472,7 +472,7 @@
       h("div", { class: "summary" },
         h("div", { class: "sum-left" },
           h("p", { class: "label" }, "Score"),
-          h("p", { class: "score" }, fmtX(score)),
+          h("p", { class: "score", style: `--chars:${fmtX(score).length}` }, fmtX(score)),
           tag,
           h("p", { class: "label" }, "How everyone did ", note),
           chart,
