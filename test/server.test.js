@@ -40,6 +40,13 @@ test("serves the page and assets, but not server files", async () => {
   assert.equal((await fetch(base + "/%E0%A4%A")).status, 400);
 });
 
+test("health reports where data is stored", async () => {
+  const health = await (await fetch(base + "/api/health")).json();
+  assert.equal(health.storage.kind, BACKEND === "turso" ? "turso" : "local");
+  assert.equal(health.storage.ready, true);
+  assert.equal(health.storage.error, null);
+});
+
 test("records a guess and returns crowd stats", async () => {
   const res = await post("/api/guess", { day: TODAY, q: 0, guess: answers[0] * 10, player: "player-aaaa" });
   assert.equal(res.status, 200);

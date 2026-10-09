@@ -490,7 +490,9 @@ async function handleApi(req, res, url, db, ctx) {
     }
 
     case "GET /api/health":
-      return sendJson(res, 200, { ok: true, today: Puzzle.today() });
+      // `storage` shows where accounts and guesses are saved: "turso" (permanent) or
+      // "local" (a file on the server, wiped on restart on hosts like Render's free plan).
+      return sendJson(res, 200, { ok: true, today: Puzzle.today(), storage: ctx.storage });
     default:
       throw new HttpError(404, "not found");
   }
@@ -504,9 +506,20 @@ function createServer({
   trustProxy = !!process.env.TRUST_PROXY,
 } = {}) {
   const db = openStore({ dbPath, tursoUrl, tursoToken, fetchImpl });
+  const storage = { kind: db.kind === "turso" ? "turso" : "local", ready: false, error: null };
   db.ready.then(
-    () => console.log(`Storage: ${db.kind === "turso" ? "Turso" : "local SQLite at " + dbPath}`),
-    (err) => console.error("Storage failed to initialise:", err.message)
+    () => {
+      storage.ready = true;
+      console.log(`Storage: ${db.kind === "turso" ? "Turso" : "local SQLite at " + dbPath}`);
+      if (db.kind !== "turso" && process.env.RENDER) {
+        console.warn("WARNING: TURSO_DATABASE_URL is not set, so accounts and guesses are saved to a local file that " +
+          "Render wipes on every restart and deploy. Add TURSO_DATABASE_URL and TURSO_AUTH_TOKEN under Environment.");
+      }
+    },
+    (err) => {
+      storage.error = err.message;
+      console.error("Storage failed to initialise:", err.message);
+    }
   );
   const allow = rateLimiter();
   const authLimit = rateLimiter({ capacity: 10, refillPerSec: 1 / 6 }); // 10 tries, then 1 every 6 s
@@ -517,7 +530,7 @@ function createServer({
       if (url.pathname.startsWith("/api/")) {
         const ip = (trustProxy && String(req.headers["x-forwarded-for"] || "").split(",")[0].trim()) || req.socket.remoteAddress;
         if (!allow(ip)) throw new HttpError(429, "slow down");
-        return await handleApi(req, res, url, db, { trustProxy, allowAuth: () => authLimit(ip), allowPost: () => postLimit(ip) });
+        return await handleApi(req, res, url, db, { trustProxy, allowAuth: () => authLimit(ip), allowPost: () => postLimit(ip), storage });
       }
       if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "method not allowed");
       return serveStatic(req, res, url.pathname, url.searchParams.get("v") === ASSET_VERSION);
