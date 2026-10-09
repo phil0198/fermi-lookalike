@@ -160,6 +160,23 @@ test("sign in checks the password and folds in guesses made while signed out", a
   assert.equal(st.offset, undefined);
 });
 
+test("sessions renew on visits (rolling 90 days)", async () => {
+  // A fresh session isn't rewritten on every request...
+  const quiet = await fetch(base + "/api/me", { headers: { Cookie: aliceCookie } });
+  assert.equal(quiet.headers.get("set-cookie"), null);
+  // ...but one that's been running a while is pushed back out to 90 days.
+  const { createHash } = require("node:crypto");
+  const token = aliceCookie.split("=")[1];
+  const hash = createHash("sha256").update(token).digest("hex");
+  const in80Days = Date.now() + 80 * 864e5;
+  await server.__db.run("UPDATE sessions SET expires_at = ? WHERE token_hash = ?", [in80Days, hash]);
+  const renewed = await fetch(base + "/api/me", { headers: { Cookie: aliceCookie } });
+  assert.match(renewed.headers.get("set-cookie"), /Max-Age=7776000/);
+  const [row] = await server.__db.all("SELECT expires_at FROM sessions WHERE token_hash = ?", [hash]);
+  assert.ok(row.expires_at > Date.now() + 89 * 864e5);
+  assert.equal((await renewed.json()).user.username, "Alice_1");
+});
+
 test("auth endpoints are rate limited", async () => {
   let last;
   for (let i = 0; i < 12; i++) last = await post("/api/login", { username: "alice_1", password: "nope-nope" });

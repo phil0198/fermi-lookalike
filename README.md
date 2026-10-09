@@ -110,6 +110,6 @@ Rules the server enforces:
 - `day` must be a puzzle that has already been released.
 - The server computes the error itself from its own copy of the answer.
 - Request bodies are capped at 2 KB, and each IP is rate-limited (a 60-request burst, refilling at 1 per second). Sign-up and sign-in get a tighter limit (10 tries, then 1 every 6 seconds).
-- Passwords are hashed with scrypt and a random salt per user. Session tokens are random, and only their SHA-256 hash is stored. Sessions last 90 days.
+- Passwords are hashed with scrypt and a random salt per user. Session tokens are random, and only their SHA-256 hash is stored. Sessions are rolling: each visit renews them to 90 days, so regular players stay signed in, and only 90 days without a visit signs someone out.
 - An account's player id can't be used without signing in.
 - Only `index.html`, `css/` and `js/` are served as static files.

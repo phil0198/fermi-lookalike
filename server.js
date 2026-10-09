@@ -197,9 +197,19 @@ async function sessionUser(db, req) {
   const token = parseCookies(req)[SESSION_COOKIE];
   if (!token || token.length > 100) return null;
   const rows = await db.all(
-    `SELECT u.id, u.username, u.player FROM sessions s JOIN users u ON u.id = s.user_id
+    `SELECT u.id, u.username, u.player, s.expires_at FROM sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = ? AND s.expires_at > ?`, [sha256(token), Date.now()]);
-  return rows[0] || null;
+  return rows[0] ? { ...rows[0], token } : null;
+}
+
+// Rolling sessions: when a signed-in player visits and their session has been
+// running for over a day, push its expiry back out to the full 90 days.
+const RENEW_AFTER_MS = 864e5;
+async function renewSession(db, req, res, user, trustProxy) {
+  const fresh = Date.now() + SESSION_DAYS * 864e5;
+  if (fresh - user.expires_at < RENEW_AFTER_MS) return;
+  await db.run("UPDATE sessions SET expires_at = ? WHERE token_hash = ?", [fresh, sha256(user.token)]);
+  setSessionCookie(res, req, user.token, trustProxy);
 }
 
 function setSessionCookie(res, req, token, trustProxy) {
@@ -424,6 +434,7 @@ async function handleApi(req, res, url, db, ctx) {
     }
     case "GET /api/me": {
       const user = await sessionUser(db, req);
+      if (user) await renewSession(db, req, res, user, ctx.trustProxy);
       return sendJson(res, 200, user ? await accountView(db, user) : { user: null });
     }
 
@@ -466,6 +477,7 @@ function createServer({
     }
   });
   server.on("close", () => db.close());
+  Object.defineProperty(server, "__db", { value: db }); // for tests
   return server;
 }
 
