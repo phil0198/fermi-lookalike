@@ -390,7 +390,7 @@
           h("p", { class: "label" }, "How everyone did ", note),
           chart,
           h("div", { class: "actions" },
-            h("button", { class: "pill pill-dark", type: "button", onclick: shareCard }, "Share card"),
+            window.BALLPARK_NO_DOWNLOAD ? null : h("button", { class: "pill pill-dark", type: "button", onclick: shareCard }, "Share card"),
             h("button", { class: "pill pill-outline-dark", type: "button", onclick: copyText }, "Copy text"))
         ),
         h("div", { class: "sum-right" },
