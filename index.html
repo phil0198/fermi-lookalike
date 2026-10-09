@@ -35,6 +35,8 @@
       <button class="link" id="statsBtn" type="button">Stats</button>
       <span aria-hidden="true">·</span>
       <button class="link" id="archiveBtn" type="button">Archive</button>
+      <span aria-hidden="true">·</span>
+      <button class="link account-link" id="accountBtn" type="button" hidden>Sign in</button>
       <span class="countdown" id="countdown"></span>
     </nav>
   </main>
@@ -70,8 +72,14 @@
     <form method="dialog" class="modal-inner">
       <p class="eyebrow">Your stats</p>
       <div class="stat-grid" id="statGrid"></div>
+      <p class="muted small-print" id="statsNote"></p>
       <button class="pill pill-solid" value="close">Close</button>
     </form>
+  </dialog>
+
+  <!-- Account -->
+  <dialog class="modal" id="accountModal" aria-label="Account">
+    <div class="modal-inner" id="accountBody"></div>
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>

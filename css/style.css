@@ -366,7 +366,7 @@ code {
 .napkin p { margin: 0; padding: 0 40px 32px; font-size: 20px; line-height: 1.55; font-weight: 500; }
 
 /* ---------- Summary ---------- */
-.summary { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 56px; }
+.summary { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 56px; }
 .label { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; opacity: 0.72; }
 .score {
   margin: 4px 0 20px -8px;
@@ -392,7 +392,7 @@ code {
   padding: 0 0 30px; margin-bottom: 30px;
   border-bottom: 2px solid rgba(17, 17, 17, 0.2);
 }
-.sum-q { font-size: 23px; font-weight: 700; line-height: 1.55; }
+.sum-q { flex: 1; min-width: 0; font-size: 23px; font-weight: 700; line-height: 1.55; }
 .sum-x { font-size: 28px; font-weight: 800; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .sum-x i { font-style: normal; opacity: 0.6; margin-right: 4px; }
 
@@ -523,6 +523,34 @@ code {
 }
 .stat b { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; }
 .stat span { font-size: 12px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.6; }
+
+/* ---------- Account ---------- */
+.account-link { color: var(--ink); }
+.account-link::before { content: "●"; color: var(--coral); margin-right: 6px; font-size: 0.7em; vertical-align: 2px; }
+.link.inline { padding: 0; color: var(--coral); text-decoration: underline; text-underline-offset: 3px; font-weight: 700; }
+.small-print { font-size: 15px !important; margin-top: 12px !important; }
+.account-form { display: flex; flex-direction: column; gap: 6px; margin-top: 18px; }
+.account-form label { font-size: 13px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.7; margin-top: 10px; }
+.account-form input {
+  font: 600 18px var(--font);
+  color: var(--ink);
+  background: var(--white);
+  border: 2px solid rgba(17, 17, 17, 0.15);
+  border-radius: 14px;
+  padding: 14px 16px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.account-form input:focus { border-color: var(--coral); }
+.hint-line { font-size: 13px; opacity: 0.6; }
+.form-error { color: #b2432a; font-weight: 700; font-size: 15px !important; min-height: 1.2em; margin: 8px 0 0 !important; }
+.account-form .pill { margin-top: 6px; }
+.pill:disabled { opacity: 0.6; }
+.switch { margin-top: 18px !important; font-size: 15px !important; }
+.modal-actions { display: flex; gap: 12px; margin-top: 8px; }
+.modal-actions .pill { flex: 1; }
+.pill-ghost { background: none; border-color: rgba(17, 17, 17, 0.25); color: var(--ink); height: 64px; font-size: 16px; padding: 0 28px; }
+.pill-ghost:hover { border-color: var(--ink); }
 
 /* ---------- Toast ---------- */
 .toast {

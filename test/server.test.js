@@ -88,3 +88,80 @@ test("rejects bad input", async () => {
   assert.equal((await post("/api/guess", JSON.stringify({ pad: "x".repeat(5000) }))).status, 413);
   assert.equal((await fetch(base + "/api/nope")).status, 404);
 });
+
+/* ---------------- Accounts ---------------- */
+const cookieFrom = (res) => (res.headers.get("set-cookie") || "").split(";")[0];
+const postAs = (cookie, path, body) =>
+  fetch(base + path, { method: "POST", headers: { "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify(body) });
+const meAs = async (cookie) => (await fetch(base + "/api/me", { headers: { Cookie: cookie } })).json();
+
+let aliceCookie;
+
+test("sign up keeps this browser's earlier guesses and starts a session", async () => {
+  await post("/api/guess", { day: TODAY, q: 0, guess: answers[0], player: "anon-alice-1" });
+  const res = await post("/api/signup", { username: "Alice_1", password: "correct horse", player: "anon-alice-1" });
+  assert.equal(res.status, 200);
+  const setCookie = res.headers.get("set-cookie");
+  assert.match(setCookie, /bp_session=[^;]+; Path=\/; HttpOnly; SameSite=Lax; Max-Age=\d+/);
+  aliceCookie = cookieFrom(res);
+  const me = await res.json();
+  assert.equal(me.user.username, "Alice_1");
+  assert.equal(me.player, "anon-alice-1");
+  assert.equal(me.history.length, 1);
+  assert.equal(me.history[0].guesses[0], answers[0]);
+  assert.equal(me.stats.played, 0); // only 1 of 3 answered
+});
+
+test("usernames are unique (case-insensitive) and validated", async () => {
+  assert.equal((await post("/api/signup", { username: "alice_1", password: "whatever123" })).status, 409);
+  assert.equal((await post("/api/signup", { username: "a", password: "whatever123" })).status, 400);
+  assert.equal((await post("/api/signup", { username: "bad name!", password: "whatever123" })).status, 400);
+  assert.equal((await post("/api/signup", { username: "shortpw", password: "1234" })).status, 400);
+});
+
+test("signed-in guesses go to the account, whatever player id the browser sends", async () => {
+  const res = await postAs(aliceCookie, "/api/day", { day: TODAY, guesses: [answers[0], answers[1] * 2, answers[2]], player: "someone-else-1" });
+  assert.equal(res.status, 200);
+  const me = await meAs(aliceCookie);
+  assert.equal(me.stats.played, 1);
+  assert.equal(me.stats.streak, 1);
+  assert.ok(Math.abs(me.stats.best - Math.pow(10, Math.log10(2) / 3)) < 1e-9);
+  // Nothing was recorded under the id the browser claimed.
+  const other = await (await fetch(`${base}/api/question?day=${TODAY}&q=1&player=someone-else-1`)).json();
+  assert.equal(other.offset, undefined);
+});
+
+test("an account's player id can't be used without signing in", async () => {
+  const res = await post("/api/guess", { day: TODAY, q: 2, guess: 5, player: "anon-alice-1" });
+  assert.equal(res.status, 401);
+});
+
+test("sign out ends the session", async () => {
+  const res = await postAs(aliceCookie, "/api/logout", {});
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("set-cookie"), /Max-Age=0/);
+  assert.deepEqual(await meAs(aliceCookie), { user: null });
+});
+
+test("sign in checks the password and folds in guesses made while signed out", async () => {
+  assert.equal((await post("/api/login", { username: "alice_1", password: "wrong password" })).status, 401);
+  assert.equal((await post("/api/login", { username: "nobody_here", password: "whatever123" })).status, 401);
+  // A new device plays question 0 of today anonymously (already answered on the account, so the account's answer wins)...
+  await post("/api/guess", { day: TODAY, q: 0, guess: answers[0] * 1000, player: "anon-device-2" });
+  const res = await post("/api/login", { username: "ALICE_1", password: "correct horse", player: "anon-device-2" });
+  assert.equal(res.status, 200);
+  aliceCookie = cookieFrom(res);
+  const me = await res.json();
+  assert.equal(me.user.username, "Alice_1");
+  assert.equal(me.history.find((h) => h.day === TODAY).guesses[0], answers[0]);
+  assert.equal(me.stats.played, 1);
+  // ...and the anonymous copy is gone.
+  const st = await (await fetch(`${base}/api/question?day=${TODAY}&q=0&player=anon-device-2`)).json();
+  assert.equal(st.offset, undefined);
+});
+
+test("auth endpoints are rate limited", async () => {
+  let last;
+  for (let i = 0; i < 12; i++) last = await post("/api/login", { username: "alice_1", password: "nope-nope" });
+  assert.equal(last.status, 429);
+});

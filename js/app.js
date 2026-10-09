@@ -3,7 +3,7 @@
 
   const Puzzle = window.BallparkPuzzle;
   const { CATS, PER_DAY, TZ, etDate, dayIndex, dateOf, rng, puzzleFor } = Puzzle;
-  const STORE_KEY = "ballpark:v2";
+  const STORE_KEY = "ballpark:v3";
   const CROWD = 1500; // simulated players per question, used only when the server is unreachable
   const HIST_BINS = 21;
   const Q_RANGE = [-1, 1]; // answer/10 .. answer*10 (log10 offsets)
@@ -18,8 +18,10 @@
     save(d) { try { localStorage.setItem(STORE_KEY, JSON.stringify(d)); } catch { /* private mode */ } },
   };
   const db = store.load();
+  const newPlayerId = () =>
+    crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
   if (!db.player) {
-    db.player = crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+    db.player = newPlayerId();
     store.save(db);
   }
 
@@ -46,6 +48,22 @@
       return null;
     } finally {
       clearTimeout(timer);
+    }
+  }
+
+  // For account calls: resolves {ok, data} or {ok: false, error} with a message to show.
+  async function call(path, { method = "POST", body } = {}) {
+    try {
+      const res = await fetch(path, {
+        method,
+        headers: body ? { "Content-Type": "application/json" } : {},
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined,
+      });
+      const data = await res.json().catch(() => ({}));
+      return res.ok ? { ok: true, data } : { ok: false, status: res.status, error: data.error || "Something went wrong. Try again." };
+    } catch {
+      return { ok: false, error: "Couldn't reach the server. Check your connection and try again." };
     }
   }
 
@@ -83,7 +101,14 @@
   const fmtX = (r) => (r >= 1000 ? Math.round(r).toLocaleString("en-US") : Number(r.toPrecision(3)).toFixed(r >= 100 ? 0 : r >= 10 ? 1 : 2)) + "×";
 
   /* ---------------- Numbers ---------------- */
+  const SUP = "⁰¹²³⁴⁵⁶⁷⁸⁹";
+  const sup = (e) => String(e).replace(/\d/g, (d) => SUP[d]);
+  function sci(n) {
+    const e = Math.floor(Math.log10(n));
+    return `${trim(n / Math.pow(10, e))} × 10${sup(e)}`;
+  }
   function fmtNum(n) {
+    if (n >= 1e15) return sci(n);
     if (n >= 1e12) return trim(n / 1e12) + " trillion";
     if (n >= 1e9) return trim(n / 1e9) + " billion";
     if (n >= 1e7) return trim(n / 1e6) + " million";
@@ -92,6 +117,7 @@
   }
   function trim(n) { return Number(n.toPrecision(3)).toLocaleString("en-US", { maximumFractionDigits: 2 }); }
   function compact(n) {
+    if (n >= 1e15) return sci(n).replace(/ /g, "");
     const units = [[1e12, "T"], [1e9, "B"], [1e6, "M"], [1e3, "K"]];
     for (const [v, s] of units) if (n >= v) return trim(n / v) + s;
     return trim(n);
@@ -159,6 +185,8 @@
     ball: '<circle cx="12" cy="12" r="8.5"/><path d="M3.8 9.5c3 .5 5.8 2.6 7 6M20.2 14.5c-3-.5-5.8-2.6-7-6M9.2 3.9c.4 3 2.4 5.7 5.6 7M14.8 20.1c-.4-3-2.4-5.7-5.6-7"/>',
     chip: '<rect x="6.5" y="6.5" width="11" height="11" rx="1.5"/><rect x="9.5" y="9.5" width="5" height="5"/><path d="M9.5 3.5v3M14.5 3.5v3M9.5 17.5v3M14.5 17.5v3M3.5 9.5h3M3.5 14.5h3M17.5 9.5h3M17.5 14.5h3"/>',
     globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.4 3.5 5.3 3.5 8.5s-1.1 6.1-3.5 8.5c-2.4-2.4-3.5-5.3-3.5-8.5S9.6 5.9 12 3.5Z"/>',
+    hourglass: '<path d="M6.5 3.5h11M6.5 20.5h11M7.5 3.5c0 4 4.5 5.5 4.5 8.5s-4.5 4.5-4.5 8.5M16.5 3.5c0 4-4.5 5.5-4.5 8.5s4.5 4.5 4.5 8.5"/><path d="M9.5 18.5h5"/>',
+    house: '<path d="M4 11 12 4.5l8 6.5"/><path d="M6.5 9.5v10h11v-10"/><path d="M10 19.5v-5h4v5"/>',
   };
   const icon = (name) => h("svg", { class: "ico", viewBox: "0 0 24 24", "aria-hidden": "true", html: ICONS[name] });
 
@@ -167,9 +195,17 @@
   let day = parseInt(qs.get("day"), 10);
   if (!(day >= 1 && day <= TODAY)) day = TODAY;
   const puzzle = puzzleFor(day);
-  const game = db.games[day] || { guesses: [] };
+  let game = db.games[day] || { guesses: [] };
   // view: {mode: "question"|"reveal"|"summary", i}
-  let view = game.guesses.length >= PER_DAY ? { mode: "summary" } : { mode: "question", i: game.guesses.length };
+  const viewFor = (g) => (g.guesses.length >= PER_DAY ? { mode: "summary" } : { mode: "question", i: g.guesses.length });
+  let view = viewFor(game);
+  let account = null; // {user, player, history, stats} when signed in
+
+  // Re-read today's game after an account sign-in/out changed what's stored.
+  function reloadGame() {
+    game = db.games[day] || { guesses: [] };
+    go(viewFor(game));
+  }
 
   const persist = () => { db.games[day] = game; store.save(db); };
 
@@ -364,6 +400,7 @@
 
     // Also re-syncs any guesses that failed to send earlier (the server ignores duplicates).
     api("/api/day", { day, guesses: game.guesses }).then((res) => {
+      if (res && account) refreshAccount();
       if (!chart.isConnected) return;
       const st = res ? res.day : simDay(day, score);
       tag.textContent = st.count <= 1 ? "First to finish!" : `Top ${st.top}%`;
@@ -507,22 +544,165 @@
   }
 
   /* ---------------- Stats ---------------- */
-  function renderStats() {
-    const done = Object.keys(db.games).map(Number).filter((n) => db.games[n].guesses.length >= PER_DAY).sort((a, b) => a - b);
+  function localStats() {
+    const done = Object.keys(db.games).map(Number).filter((n) => n <= TODAY && db.games[n].guesses.length >= PER_DAY).sort((a, b) => a - b);
     const scores = done.map((n) => dayScore(db.games[n].guesses, puzzleFor(n)));
-    let maxRun = 0, run = 0;
-    done.forEach((n, k) => { run = k && n === done[k - 1] + 1 ? run + 1 : 1; maxRun = Math.max(maxRun, run); });
+    let maxStreak = 0, run = 0;
+    done.forEach((n, k) => { run = k && n === done[k - 1] + 1 ? run + 1 : 1; maxStreak = Math.max(maxStreak, run); });
     const set = new Set(done);
-    let cur = 0;
-    for (let n = set.has(TODAY) ? TODAY : TODAY - 1; set.has(n); n--) cur++;
-    const avg = scores.length ? Math.pow(10, scores.reduce((s, v) => s + Math.log10(v), 0) / scores.length) : null;
+    let streak = 0;
+    for (let n = set.has(TODAY) ? TODAY : TODAY - 1; set.has(n); n--) streak++;
+    return {
+      played: done.length,
+      average: scores.length ? Math.pow(10, scores.reduce((s, v) => s + Math.log10(v), 0) / scores.length) : null,
+      best: scores.length ? Math.min(...scores) : null,
+      streak, maxStreak,
+    };
+  }
+  function statTiles(st) {
     const tile = (v, l) => h("div", { class: "stat" }, h("b", {}, v), h("span", {}, l));
-    $("#statGrid").replaceChildren(
-      tile(done.length, "Played"),
-      tile(avg ? fmtX(avg) : "—", "Average"),
-      tile(scores.length ? fmtX(Math.min(...scores)) : "—", "Best"),
-      tile(cur, "Streak"),
-      tile(maxRun, "Max streak"));
+    return [
+      tile(st.played, "Played"),
+      tile(st.average ? fmtX(st.average) : "—", "Average"),
+      tile(st.best ? fmtX(st.best) : "—", "Best"),
+      tile(st.streak, "Streak"),
+      tile(st.maxStreak, "Max streak"),
+    ];
+  }
+  function renderStats() {
+    $("#statGrid").replaceChildren(...statTiles(account ? account.stats : localStats()));
+    const note = $("#statsNote");
+    if (account) {
+      note.replaceChildren(`Saved to your account, ${account.user.username}. They follow you to any device.`);
+    } else if (serverUp) {
+      note.replaceChildren("These stats live only in this browser. ",
+        h("button", { class: "link inline", type: "button", onclick: () => { $("#statsModal").close(); openAccount("signup"); } }, "Create a free account"),
+        " to keep them on any device.");
+    } else {
+      note.replaceChildren("These stats live only in this browser.");
+    }
+  }
+
+  /* ---------------- Accounts ---------------- */
+  let serverUp = false;
+
+  function renderAccountBtn() {
+    const btn = $("#accountBtn");
+    btn.hidden = !serverUp;
+    btn.textContent = account ? account.user.username : "Sign in";
+    btn.setAttribute("aria-label", account ? `Account: ${account.user.username}` : "Sign in or create an account");
+  }
+
+  // Take the server's copy of a signed-in player's history, and send up anything only this browser has.
+  function applyAccount(me) {
+    account = me && me.user ? me : null;
+    renderAccountBtn();
+    if (!account) return;
+    db.player = me.player;
+    const server = new Map();
+    for (const row of me.history) {
+      const guesses = [];
+      for (const g of row.guesses) { if (g == null) break; guesses.push(g); }
+      server.set(row.day, guesses);
+    }
+    let todayChanged = false;
+    for (const [d, guesses] of server) {
+      const local = db.games[d]?.guesses || [];
+      if (guesses.length > local.length) {
+        db.games[d] = { guesses };
+        if (d === day) todayChanged = true;
+      }
+    }
+    for (const [d, g] of Object.entries(db.games)) {
+      const n = Number(d);
+      if (n <= TODAY && g.guesses.length > (server.get(n) || []).length) api("/api/day", { day: n, guesses: g.guesses });
+    }
+    store.save(db);
+    if (todayChanged && view.mode !== "reveal") reloadGame();
+  }
+
+  async function refreshAccount() {
+    const res = await call("/api/me", { method: "GET" });
+    if (res.ok) applyAccount(res.data);
+  }
+
+  function openAccount(mode) {
+    renderAccount(mode || "signin");
+    const dlg = $("#accountModal");
+    if (!dlg.open) dlg.showModal();
+  }
+
+  function renderAccount(mode) {
+    const body = $("#accountBody");
+    if (account) {
+      body.replaceChildren(
+        h("p", { class: "eyebrow" }, "Your account"),
+        h("h2", {}, account.user.username),
+        h("div", { class: "stat-grid" }, statTiles(account.stats)),
+        h("p", { class: "muted small-print" }, "Your stats and every puzzle you play are saved to this account."),
+        h("div", { class: "modal-actions" },
+          h("button", { class: "pill pill-ghost", type: "button", onclick: signOut }, "Sign out"),
+          h("button", { class: "pill pill-solid", type: "button", onclick: () => $("#accountModal").close() }, "Done"))
+      );
+      return;
+    }
+    const signup = mode === "signup";
+    const err = h("p", { class: "form-error", role: "alert" });
+    const user = h("input", { id: "acctUser", name: "username", type: "text", autocomplete: "username", required: true,
+      minlength: 3, maxlength: 20, pattern: "[A-Za-z0-9_]+", spellcheck: "false", autocapitalize: "none" });
+    const pass = h("input", { id: "acctPass", name: "password", type: "password", required: true, minlength: signup ? 8 : 1,
+      maxlength: 200, autocomplete: signup ? "new-password" : "current-password" });
+    const submit = h("button", { class: "pill pill-solid", type: "submit" }, signup ? "Create account" : "Sign in");
+    const form = h("form", {
+      class: "account-form", novalidate: true,
+      onsubmit: async (e) => {
+        e.preventDefault();
+        err.textContent = "";
+        if (!user.value.trim() || !pass.value) { err.textContent = "Enter a username and password."; return; }
+        submit.disabled = true;
+        submit.textContent = signup ? "Creating…" : "Signing in…";
+        const res = await call(signup ? "/api/signup" : "/api/login", {
+          body: { username: user.value.trim(), password: pass.value, player: db.player },
+        });
+        submit.disabled = false;
+        submit.textContent = signup ? "Create account" : "Sign in";
+        if (!res.ok) { err.textContent = res.error; return; }
+        applyAccount(res.data);
+        $("#accountModal").close();
+        toast(signup ? `Welcome, ${res.data.user.username}!` : `Signed in as ${res.data.user.username}`);
+      },
+    },
+      h("label", { for: "acctUser" }, "Username"), user,
+      signup ? h("small", { class: "hint-line" }, "3–20 letters, numbers or underscores") : null,
+      h("label", { for: "acctPass" }, "Password"), pass,
+      signup ? h("small", { class: "hint-line" }, "At least 8 characters") : null,
+      err, submit
+    );
+    body.replaceChildren(
+      h("p", { class: "eyebrow" }, signup ? "Create account" : "Sign in"),
+      h("h2", {}, signup ? "Keep your stats everywhere." : "Welcome back."),
+      h("p", {}, signup
+        ? "Your streaks and scores are saved to your account. Puzzles you've already played here come with you."
+        : "Sign in to pick up your streak on this device."),
+      form,
+      h("p", { class: "switch" }, signup ? "Already have an account? " : "New here? ",
+        h("button", { class: "link inline", type: "button", onclick: () => renderAccount(signup ? "signin" : "signup") },
+          signup ? "Sign in" : "Create an account"))
+    );
+    requestAnimationFrame(() => user.focus());
+  }
+
+  async function signOut() {
+    await call("/api/logout", {});
+    account = null;
+    // Start fresh: the account's games stay on the server, not in this browser.
+    db.player = newPlayerId();
+    db.games = {};
+    store.save(db);
+    $("#accountModal").close();
+    renderAccountBtn();
+    reloadGame();
+    toast("Signed out");
   }
 
   /* ---------------- Countdown ---------------- */
@@ -544,9 +724,16 @@
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
   $("#helpBtn").addEventListener("click", () => $("#helpModal").showModal());
   $("#statsBtn").addEventListener("click", () => { renderStats(); $("#statsModal").showModal(); });
+  $("#accountBtn").addEventListener("click", () => openAccount());
   for (const d of document.querySelectorAll("dialog")) d.addEventListener("click", (e) => { if (e.target === d) d.close(); });
 
   render();
+  renderAccountBtn();
+  call("/api/me", { method: "GET" }).then((res) => {
+    if (!res.ok) return; // no server (static hosting): play anonymously
+    serverUp = true;
+    applyAccount(res.data);
+  });
   tickCountdown();
   setInterval(tickCountdown, 1000);
 

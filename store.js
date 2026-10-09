@@ -1,19 +1,22 @@
 "use strict";
 /*
- * Guess storage with two interchangeable backends:
+ * Database access with two interchangeable backends:
  *
  *   - Turso (hosted libSQL, free tier) when TURSO_DATABASE_URL is set.
  *     Talks to Turso's HTTP API ("Hrana over HTTP", POST /v2/pipeline)
  *     with plain fetch, so there are no npm dependencies.
  *   - A local SQLite file via node:sqlite otherwise.
  *
- * Both expose the same async interface.
+ * Both expose the same async interface: all(sql, args) returns rows as
+ * plain objects, run(sql, args) executes a statement, and ready resolves
+ * once the schema exists.
  */
 const fs = require("node:fs");
 const path = require("node:path");
 
 const SCHEMA = [
-  `CREATE TABLE IF NOT EXISTS guesses (
+  // One row per guess. `player` is an anonymous browser id or an account's player id.
+  `CREATE TABLE IF NOT EXISTS plays (
     day        INTEGER NOT NULL,
     q          INTEGER NOT NULL,
     player     TEXT    NOT NULL,
@@ -22,31 +25,37 @@ const SCHEMA = [
     created_at INTEGER NOT NULL,
     PRIMARY KEY (day, q, player)
   )`,
-  "CREATE INDEX IF NOT EXISTS guesses_day ON guesses (day, q)",
+  "CREATE INDEX IF NOT EXISTS plays_player ON plays (player, day)",
+  `CREATE TABLE IF NOT EXISTS users (
+    id             TEXT PRIMARY KEY,
+    username       TEXT NOT NULL,
+    username_lower TEXT NOT NULL UNIQUE,
+    password_hash  TEXT NOT NULL,
+    player         TEXT NOT NULL UNIQUE,
+    created_at     INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user_id)",
 ];
-const SQL = {
-  // First guess wins: a player can't overwrite an earlier answer.
-  insert: "INSERT OR IGNORE INTO guesses (day, q, player, guess, offset, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-  offsets: "SELECT player, offset FROM guesses WHERE day = ? AND q = ?",
-  dayScores: (perDay) => `SELECT player, AVG(ABS(offset)) AS score FROM guesses WHERE day = ? GROUP BY player HAVING COUNT(*) = ${perDay}`,
-};
 
 /* ---------------- Local SQLite ---------------- */
-function localStore(file, perDay) {
+function localStore(file) {
   const { DatabaseSync } = require("node:sqlite");
   if (file !== ":memory:") fs.mkdirSync(path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec("PRAGMA journal_mode = WAL;");
   for (const s of SCHEMA) db.exec(s);
-  const insert = db.prepare(SQL.insert);
-  const offsets = db.prepare(SQL.offsets);
-  const dayScores = db.prepare(SQL.dayScores(perDay));
+  const cache = new Map();
+  const prep = (sql) => cache.get(sql) || cache.set(sql, db.prepare(sql)).get(sql);
   return {
     kind: "sqlite",
     ready: Promise.resolve(),
-    insert: async (...args) => { insert.run(...args); },
-    offsets: async (day, q) => offsets.all(day, q),
-    dayScores: async (day) => dayScores.all(day),
+    all: async (sql, args = []) => prep(sql).all(...args).map((r) => ({ ...r })),
+    run: async (sql, args = []) => { prep(sql).run(...args); },
     close: () => db.close(),
   };
 }
@@ -67,7 +76,7 @@ function decodeValue(v) {
   }
 }
 
-function tursoStore(url, token, perDay, { fetchImpl = fetch, timeoutMs = 8000 } = {}) {
+function tursoStore(url, token, { fetchImpl = fetch, timeoutMs = 8000 } = {}) {
   const endpoint = url.replace(/^libsql:\/\//, "https://").replace(/\/+$/, "") + "/v2/pipeline";
 
   async function pipeline(stmts) {
@@ -90,22 +99,20 @@ function tursoStore(url, token, perDay, { fetchImpl = fetch, timeoutMs = 8000 } 
       return rows.map((row) => Object.fromEntries(cols.map((c, i) => [c.name, decodeValue(row[i])])));
     });
   }
-  const one = async (sql, args) => (await pipeline([[sql, args]]))[0];
 
   const ready = pipeline(SCHEMA.map((s) => [s]));
   return {
     kind: "turso",
     ready,
-    insert: async (...args) => { await ready; await one(SQL.insert, args); },
-    offsets: async (day, q) => { await ready; return one(SQL.offsets, [day, q]); },
-    dayScores: async (day) => { await ready; return one(SQL.dayScores(perDay), [day]); },
+    all: async (sql, args) => { await ready; return (await pipeline([[sql, args]]))[0]; },
+    run: async (sql, args) => { await ready; await pipeline([[sql, args]]); },
     close: () => {},
   };
 }
 
-function openStore({ dbPath, tursoUrl, tursoToken, perDay, fetchImpl }) {
-  if (tursoUrl) return tursoStore(tursoUrl, tursoToken, perDay, { fetchImpl });
-  return localStore(dbPath, perDay);
+function openStore({ dbPath, tursoUrl, tursoToken, fetchImpl }) {
+  if (tursoUrl) return tursoStore(tursoUrl, tursoToken, { fetchImpl });
+  return localStore(dbPath);
 }
 
 module.exports = { openStore, tursoStore, localStore, SCHEMA };

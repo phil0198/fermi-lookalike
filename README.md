@@ -50,12 +50,13 @@ The front end still works without the server: `python3 -m http.server`, or GitHu
 
 ## Features
 
-- **Daily puzzle.** It changes at midnight Eastern Time and draws 3 questions from 3 different categories. The selection is seeded, so everyone gets the same puzzle.
+- **Daily puzzle.** It changes at midnight Eastern Time and draws 3 questions from 3 different categories. Everyone gets the same puzzle. The bank has 240 questions in 10 categories, and none repeats until all of them have been used (80 days).
+- **Accounts (optional).** Sign up with a username and password to save your stats and history on the server, so they follow you to any device. Anything you played before signing up is carried into the account.
 - **Flexible input.** The guess box accepts shorthand (`2.5k`, `40m`, `1.2b`) and arithmetic (`365*24`, `(12+3)*1k`). There's also a built-in scratchpad calculator.
 - **Answer reveal.** You get your ratio, a "how everyone guessed" histogram, and an expandable *Napkin math* breakdown.
 - **Results card.** It shows your score, percentile, a distribution chart, and a per-question breakdown. You can share it as a PNG image or copy it as text.
 - **Archive.** Every past puzzle is playable from the side menu.
-- **Stats.** Tracks games played, average, best, and streaks, stored in `localStorage`.
+- **Stats.** Tracks games played, average, best, and streaks. Signed-in players' stats come from the server; anonymous players' stats live in `localStorage`.
 
 ## Files
 
@@ -64,30 +65,36 @@ The front end still works without the server: `python3 -m http.server`, or GitHu
 | `index.html` | Page shell, modals, drawer |
 | `css/style.css` | All styling (coral question card, yellow results card, responsive) |
 | `js/questions.js` | Categories and the question bank (answer, unit, napkin math) |
-| `js/puzzle.js` | Daily puzzle selection, shared by the browser and the server |
+| `js/puzzle.js` | Daily schedule (no repeats until the bank is used up), shared by the browser and the server |
 | `js/app.js` | Scoring, rendering, calculator, sharing, archive, stats, API client |
 | `server.js` | Static file server + JSON API |
-| `store.js` | Guess storage: Turso over HTTP, or local SQLite |
+| `store.js` | Database access: Turso over HTTP, or local SQLite |
 | `test/server.test.js` | Server tests, run against both storage backends (`npm test`) |
 | `test/mock-turso.js` | Local stand-in for Turso's HTTP API, used by the tests |
 
 ## Adding questions
 
-Add entries to `js/questions.js`:
+Add entries to any category in `js/questions.js`:
 
 ```js
 { q: "How many …?", unit: "meters", a: 1234, napkin: "Short back-of-the-envelope reasoning." }
 ```
 
+Each category gets used on 3 out of every 10 days, so adding questions to a category makes it last longer before repeating. **Add new questions at the end of a category's list and don't reorder existing ones.** The schedule is computed from the list order, so reordering would change which questions belong to past puzzles.
+
 ## API
 
-Every request carries a random `player` id that the browser generates once and keeps in `localStorage`. Accounts aren't needed.
+Anonymous players send a random `player` id that the browser generates once and keeps in `localStorage`. Signed-in players are identified by an HttpOnly session cookie, and the server ignores any `player` id they send.
 
 | Method | Path | Body / query | Returns |
 | --- | --- | --- | --- |
 | `POST` | `/api/guess` | `{day, q, guess, player}` | That question's stats: `count`, `bins` (21 bins from answer÷10 to ×10, log scale), your `offset`, and `closerThan` (% of other players you beat) |
 | `POST` | `/api/day` | `{day, guesses: [g1, g2, g3], player}` | Day stats: `count`, `bins` (1× to 1,000×), your `score` and `top` %, plus each question's stats. It also re-syncs guesses made while offline. |
 | `GET` | `/api/question` | `?day&q&player` | Same as `/api/guess`, read-only |
+| `POST` | `/api/signup` | `{username, password, player}` | Creates an account (adopting this browser's history) and signs in |
+| `POST` | `/api/login` | `{username, password, player}` | Signs in and merges anything this browser played while signed out |
+| `POST` | `/api/logout` | | Ends the session |
+| `GET` | `/api/me` | | `{user: null}`, or `{user, player, history, stats}` |
 | `GET` | `/api/health` | | `{ok, today}` |
 
 Rules the server enforces:
@@ -95,5 +102,7 @@ Rules the server enforces:
 - The **first guess wins**. A player can't overwrite an earlier answer.
 - `day` must be a puzzle that has already been released.
 - The server computes the error itself from its own copy of the answer.
-- Request bodies are capped at 2 KB, and each IP is rate-limited (a 60-request burst, refilling at 1 per second).
+- Request bodies are capped at 2 KB, and each IP is rate-limited (a 60-request burst, refilling at 1 per second). Sign-up and sign-in get a tighter limit (10 tries, then 1 every 6 seconds).
+- Passwords are hashed with scrypt and a random salt per user. Session tokens are random, and only their SHA-256 hash is stored. Sessions last 90 days.
+- An account's player id can't be used without signing in.
 - Only `index.html`, `css/` and `js/` are served as static files.
