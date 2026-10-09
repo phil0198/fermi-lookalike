@@ -177,6 +177,34 @@ test("sessions renew on visits (rolling 90 days)", async () => {
   assert.equal((await renewed.json()).user.username, "Alice_1");
 });
 
+test("leaderboard ranks signed-in finishers only, best score first", async () => {
+  const bob = cookieFrom(await post("/api/signup", { username: "bob_b", password: "password123" }));
+  await postAs(bob, "/api/day", { day: TODAY, guesses: [answers[0], answers[1], answers[2] * 1.1] });
+  const carol = cookieFrom(await post("/api/signup", { username: "carol", password: "password123" }));
+  await postAs(carol, "/api/day", { day: TODAY, guesses: [answers[0], answers[1]] }); // unfinished: not ranked
+  await post("/api/day", { day: TODAY, guesses: [answers[0], answers[1], answers[2]], player: "anon-perfect-1" }); // anonymous: not ranked
+  const board = await (await fetch(base + "/api/leaderboard", { headers: { Cookie: aliceCookie } })).json();
+  assert.equal(board.day, TODAY);
+  assert.deepEqual(board.top.map((r) => r.username), ["bob_b", "Alice_1"]);
+  assert.equal(board.count, 2);
+  assert.deepEqual(board.me, { rank: 2, username: "Alice_1", score: board.top[1].score });
+  assert.equal(board.top[0].player, undefined, "player ids are never exposed");
+  const anon = await (await fetch(base + "/api/leaderboard")).json();
+  assert.equal(anon.me, null);
+});
+
+test("question suggestions and feedback are stored", async () => {
+  assert.equal((await post("/api/suggestions", { question: "How many?", answer: "" })).status, 400);
+  assert.equal((await postAs(aliceCookie, "/api/suggestions", { question: "How many bricks in the Great Wall?", answer: "3.9 billion", unit: "bricks", source: "estimate" })).status, 200);
+  assert.equal((await post("/api/feedback", { message: "Love it", contact: "me@example.com" })).status, 200);
+  const sug = await server.__db.all("SELECT question, answer, user_id FROM suggestions");
+  assert.equal(sug.length, 1);
+  assert.equal(sug[0].answer, "3.9 billion");
+  assert.ok(sug[0].user_id);
+  const fb = await server.__db.all("SELECT message, contact, user_id FROM feedback");
+  assert.deepEqual(fb, [{ message: "Love it", contact: "me@example.com", user_id: null }]);
+});
+
 test("auth endpoints are rate limited", async () => {
   let last;
   for (let i = 0; i < 12; i++) last = await post("/api/login", { username: "alice_1", password: "nope-nope" });

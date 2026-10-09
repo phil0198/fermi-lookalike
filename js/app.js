@@ -450,6 +450,7 @@
 
     // Also re-syncs any guesses that failed to send earlier (the server ignores duplicates).
     api("/api/day", { day, guesses: game.guesses }).then((res) => {
+      if (res) boardCache = null;
       if (res && account) refreshAccount();
       if (!chart.isConnected) return;
       const st = res ? res.day : simDay(day, score);
@@ -614,22 +615,201 @@
   }
 
   /* ---------------- Drawer / archive ---------------- */
-  function renderArchive() {
-    const list = $("#archiveList");
-    list.replaceChildren();
+  const dayStatus = (n) => {
+    const g = db.games[n];
+    if (!g || !g.guesses.length) return "none";
+    return g.guesses.length >= PER_DAY ? "done" : "partial";
+  };
+
+  // Drawer: a grid of the most recent 28 days (future days shown as placeholders).
+  function renderArchiveCard() {
+    const start = Math.max(1, TODAY - 27);
+    $("#cal").replaceChildren(...Array.from({ length: 28 }, (_, k) => {
+      const n = start + k;
+      if (n > TODAY) return h("span", { class: "cell future", "aria-hidden": "true" });
+      const st = dayStatus(n);
+      const label = `No. ${pad3(n)}, ${n === TODAY ? "today" : prettyDate(dateOf(n))}: ${st === "done" ? "played" : st === "partial" ? "in progress" : "not played"}`;
+      return h("a", {
+        class: `cell ${st}` + (n === TODAY ? " today" : "") + (n === day ? " viewing" : ""),
+        href: n === TODAY ? "./" : `?day=${n}`, role: "listitem", "aria-label": label, title: label,
+      });
+    }));
+    const played = Array.from({ length: TODAY }, (_, k) => k + 1).filter((n) => dayStatus(n) === "done").length;
+    const pct = Math.round((played / TODAY) * 100);
+    $("#playedText").textContent = `${played} of ${TODAY} played`;
+    $("#playedBar").style.width = `${pct}%`;
+    $("#playedPct").textContent = `${pct}%`;
+  }
+
+  let boardCache = null; // {at, data}
+  async function fetchBoard() {
+    if (boardCache && Date.now() - boardCache.at < 30000) return boardCache.data;
+    const res = await call(`/api/leaderboard?day=${TODAY}`, { method: "GET" });
+    if (!res.ok) return null;
+    boardCache = { at: Date.now(), data: res.data };
+    return res.data;
+  }
+  const boardRow = (r, me) => h("li", { class: "board-row" + (me ? " me" : "") },
+    h("span", { class: "board-rank" }, r.rank), h("span", { class: "board-name" }, r.username), h("b", {}, fmtX(r.score)));
+
+  async function renderBoardCard() {
+    const msg = $("#boardMsg"), list = $("#boardTop");
+    if (!serverUp) {
+      msg.textContent = "The leaderboard appears when the game is online.";
+      list.replaceChildren();
+      return;
+    }
+    msg.textContent = "Loading…";
+    const board = await fetchBoard();
+    if (!board) { msg.textContent = "Couldn't load the leaderboard. Try again in a moment."; return; }
+    const finishedToday = dayStatus(TODAY) === "done";
+    if (board.me) {
+      msg.replaceChildren("You're ", h("b", {}, `#${board.me.rank}`), ` of ${board.count} today at `, h("b", {}, fmtX(board.me.score)), ".");
+    } else if (finishedToday && !account) {
+      msg.replaceChildren(
+        h("button", { class: "link inline", type: "button", onclick: () => { closeDrawer(); openAccount("signup"); } }, "Create an account"),
+        " to put your name on the board.");
+    } else if (finishedToday) {
+      msg.textContent = "Your score is being added. Check back in a moment.";
+    } else {
+      msg.textContent = board.count ? "Play today's puzzle to see where you land." : "No one's on the board yet. Be the first.";
+    }
+    list.replaceChildren(...board.top.slice(0, 3).map((r) => boardRow(r, board.me && r.rank === board.me.rank)));
+  }
+
+  /* ---------------- Sheets (archive, leaderboard, forms, info) ---------------- */
+  function openSheet(eyebrow, title, ...content) {
+    $("#sheetEyebrow").textContent = eyebrow;
+    $("#sheetTitle").textContent = title;
+    $("#sheetBody").replaceChildren(...content.flat().filter(Boolean));
+    closeDrawer();
+    const dlg = $("#sheet");
+    if (!dlg.open) dlg.showModal();
+    dlg.scrollTop = 0;
+  }
+
+  function openArchiveSheet() {
+    const list = h("ol", { class: "archive-list" });
     for (let n = TODAY; n >= 1; n--) {
       const g = db.games[n];
-      const done = g && g.guesses.length >= PER_DAY;
-      const status = done ? fmtX(dayScore(g.guesses, puzzleFor(n))) : g && g.guesses.length ? "In progress" : "—";
+      const st = dayStatus(n);
+      const status = st === "done" ? fmtX(dayScore(g.guesses, puzzleFor(n))) : st === "partial" ? "In progress" : "Not played";
       list.append(h("li", {},
         h("a", { href: n === TODAY ? "./" : `?day=${n}`, class: n === day ? "active" : null },
           h("span", { class: "arch-no" }, `No. ${pad3(n)}`),
           h("span", { class: "arch-date" }, n === TODAY ? "Today" : prettyDate(dateOf(n))),
-          h("span", { class: "arch-score" + (done ? "" : " muted") }, status))));
+          h("span", { class: "arch-score" + (st === "done" ? "" : " muted") }, status))));
     }
+    openSheet("Archive", "Every puzzle so far", h("p", { class: "muted" }, "Pick any day to play it or see how you did."), list);
   }
+
+  async function openBoardSheet() {
+    const body = h("div", {}, h("p", { class: "muted" }, "Loading…"));
+    openSheet("Leaderboard", `Today · No. ${pad3(TODAY)}`, body);
+    if (!serverUp) { body.replaceChildren(h("p", {}, "The leaderboard appears when the game is online.")); return; }
+    boardCache = null;
+    const board = await fetchBoard();
+    if (!board) { body.replaceChildren(h("p", {}, "Couldn't load the leaderboard. Try again in a moment.")); return; }
+    const inTop = board.me && board.top.some((r) => r.rank === board.me.rank);
+    body.replaceChildren(
+      h("p", { class: "muted" }, "Signed-in players who finished today, ranked by score. Closest to 1× wins; ties go to whoever finished first."),
+      board.top.length
+        ? h("ol", { class: "board full" },
+            board.top.map((r) => boardRow(r, board.me && r.rank === board.me.rank)),
+            board.me && !inTop ? [h("li", { class: "board-gap", "aria-hidden": "true" }, "⋯"), boardRow(board.me, true)] : null)
+        : h("p", {}, "No one's on the board yet. Finish today's puzzle while signed in to be first."),
+      !account ? h("p", { class: "small-print" },
+        h("button", { class: "link inline", type: "button", onclick: () => { $("#sheet").close(); openAccount("signup"); } }, "Create an account"),
+        " to appear here.") : null
+    );
+  }
+
+  // A small form inside the sheet that posts to the server.
+  function submitForm({ endpoint, fields, submitLabel, thanks }) {
+    const err = h("p", { class: "form-error", role: "alert" });
+    const btn = h("button", { class: "pill pill-solid", type: "submit" }, submitLabel);
+    const inputs = {};
+    const form = h("form", {
+      class: "account-form", novalidate: true,
+      onsubmit: async (e) => {
+        e.preventDefault();
+        err.textContent = "";
+        const body = Object.fromEntries(Object.entries(inputs).map(([k, el]) => [k, el.value.trim()]));
+        const missing = fields.find((f) => f.required && !body[f.name]);
+        if (missing) { err.textContent = `Please fill in the ${missing.label.toLowerCase()}.`; inputs[missing.name].focus(); return; }
+        btn.disabled = true; btn.textContent = "Sending…";
+        const res = await call(endpoint, { body });
+        btn.disabled = false; btn.textContent = submitLabel;
+        if (!res.ok) { err.textContent = res.error; return; }
+        form.replaceWith(h("div", { class: "thanks" }, h("b", {}, "Thank you!"), h("p", {}, thanks)));
+      },
+    });
+    for (const f of fields) {
+      const id = `f_${f.name}`;
+      const el = f.multiline
+        ? h("textarea", { id, name: f.name, rows: f.rows || 4, maxlength: f.max, placeholder: f.placeholder || "", required: f.required })
+        : h("input", { id, name: f.name, type: f.type || "text", maxlength: f.max, placeholder: f.placeholder || "", required: f.required, autocomplete: f.autocomplete || "off" });
+      inputs[f.name] = el;
+      form.append(h("label", { for: id }, f.label, f.required ? null : h("span", { class: "optional" }, " (optional)")), el);
+    }
+    form.append(err, btn);
+    return form;
+  }
+
+  function openSuggestSheet() {
+    openSheet("Submit a question", "Got a great estimate?",
+      h("p", {}, "Send us a question with a single number for an answer. The best ones are surprising, but can be reasoned out with a bit of napkin math."),
+      serverUp ? submitForm({
+        endpoint: "/api/suggestions",
+        submitLabel: "Send question",
+        thanks: "We read every suggestion. If yours makes it into the game, it'll show up in a daily puzzle.",
+        fields: [
+          { name: "question", label: "Question", required: true, multiline: true, rows: 3, max: 300, placeholder: "How many…?" },
+          { name: "answer", label: "Answer", required: true, max: 60, placeholder: "e.g. 3.9 billion" },
+          { name: "unit", label: "Unit", max: 40, placeholder: "e.g. bricks, meters, years" },
+          { name: "source", label: "Source or reasoning", multiline: true, rows: 3, max: 500, placeholder: "Where the number comes from" },
+        ],
+      }) : h("p", { class: "muted" }, "Submissions open when the game is online."));
+  }
+
+  function openFeedbackSheet() {
+    openSheet("Feedback", "Tell us what you think",
+      h("p", {}, "Found a wrong answer, a bug, or an idea for the game? We'd love to hear it."),
+      serverUp ? submitForm({
+        endpoint: "/api/feedback",
+        submitLabel: "Send feedback",
+        thanks: "Your message is on its way. If you left a way to reach you, we may follow up.",
+        fields: [
+          { name: "message", label: "Message", required: true, multiline: true, rows: 5, max: 2000 },
+          { name: "contact", label: "Email, if you'd like a reply", type: "email", max: 200, autocomplete: "email" },
+        ],
+      }) : h("p", { class: "muted" }, "Feedback opens when the game is online."));
+  }
+
+  function openAboutSheet() {
+    openSheet("About", "Just ballpark it.",
+      h("p", {}, "Ballpark is a daily estimation game. Every day there are three questions with real numeric answers: how tall, how many, how far. Nobody knows them exactly, and that's the fun. Break the problem into pieces you do know and multiply your way to a guess."),
+      h("p", {}, "Guesses are scored by how many times off they are, not by how many units. Being 2× too high counts the same as being 2× too low, so a question about grains of rice is as fair as one about the height of a mountain."),
+      h("p", {}, "The question bank has 240 questions across 10 categories, and none repeats until every one has been used. Answers are commonly cited figures; when sources disagree a little, the ratio scoring means it barely matters."),
+      h("p", { class: "muted" }, "Spot a wrong answer? Use Feedback in the menu and we'll fix it."));
+  }
+
+  function openPrivacySheet() {
+    openSheet("Privacy", "What we keep, and why",
+      h("ul", { class: "plain-list" },
+        h("li", {}, h("b", {}, "Your guesses. "), "Stored to build the \u201chow everyone guessed\u201d charts and your stats. If you play without an account, they're linked to a random ID kept in your browser, not to you."),
+        h("li", {}, h("b", {}, "Your account, if you make one. "), "A username and your password, which is stored only as a one-way scrypt hash. We never see or store the password itself."),
+        h("li", {}, h("b", {}, "A sign-in cookie. "), "Keeps you signed in. It holds a random token and nothing else."),
+        h("li", {}, h("b", {}, "The leaderboard. "), "Shows the usernames of signed-in players who finished the day, with their scores."),
+        h("li", {}, h("b", {}, "Submissions. "), "Question ideas and feedback you send, plus the email address if you choose to leave one."),
+        h("li", {}, h("b", {}, "Settings. "), "Units, light/dark and theme are saved in your browser only.")),
+      h("p", {}, "There are no ads, no analytics and no tracking cookies. Data is stored with our hosting and database providers (Render and Turso). Fonts load from Google Fonts, which sees your IP address like any website you visit."),
+      h("p", { class: "muted" }, "To delete your account or ask a question about your data, send a note through Feedback."));
+  }
+
   function openDrawer() {
-    renderArchive();
+    renderArchiveCard();
+    renderBoardCard();
     const d = $("#drawer");
     d.inert = false; d.setAttribute("aria-hidden", "false"); d.classList.add("open");
     $("#menuBtn").setAttribute("aria-expanded", "true");
@@ -894,7 +1074,7 @@
       h("p", { class: "eyebrow" }, signup ? "Create account" : "Sign in"),
       h("h2", {}, signup ? "Keep your stats everywhere." : "Welcome back."),
       h("p", {}, signup
-        ? "Your streaks and scores are saved to your account. Puzzles you've already played here come with you."
+        ? "Your streaks and scores are saved to your account, and your username appears on the daily leaderboard. Puzzles you've already played here come with you."
         : "Sign in to pick up your streak on this device."),
       form,
       h("p", { class: "switch" }, signup ? "Already have an account? " : "New here? ",
@@ -938,8 +1118,14 @@
     e.preventDefault();
     go({ mode: "home" });
   });
-  $("#archiveBtn").addEventListener("click", openDrawer);
+  $("#archiveBtn").addEventListener("click", openArchiveSheet);
   $("#drawerClose").addEventListener("click", closeDrawer);
+  $("#openArchive").addEventListener("click", openArchiveSheet);
+  $("#openBoard").addEventListener("click", openBoardSheet);
+  $("#openSuggest").addEventListener("click", openSuggestSheet);
+  $("#openFeedback").addEventListener("click", openFeedbackSheet);
+  $("#openAbout").addEventListener("click", openAboutSheet);
+  $("#openPrivacy").addEventListener("click", openPrivacySheet);
   $("#scrim").addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
   $("#helpBtn").addEventListener("click", () => $("#helpModal").showModal());

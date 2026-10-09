@@ -24,7 +24,7 @@ const ROOT = __dirname;
 const HIST_BINS = 21;
 const Q_RANGE = [-1, 1]; // per-question histogram: answer/10 .. answer*10 (log10 offsets)
 const DAY_RANGE = [0, 3]; // daily score histogram: 1x .. 1,000x (log10)
-const MAX_BODY = 2048;
+const MAX_BODY = 4096;
 const SESSION_COOKIE = "bp_session";
 const SESSION_DAYS = 90;
 
@@ -102,6 +102,27 @@ async function dayStats(db, day, player) {
     out.top = Math.max(1, Math.ceil((rows.filter((r) => r.score <= mine.score + 1e-12).length / rows.length) * 100));
   }
   return out;
+}
+
+// Today's ranking among signed-in players who finished the day (lower score wins;
+// ties go to whoever finished first).
+async function leaderboard(db, day, viewer, limit = 50) {
+  const rows = await db.all(
+    `SELECT u.username, u.player, AVG(ABS(p.offset)) AS score, MAX(p.created_at) AS finished
+     FROM plays p JOIN users u ON u.player = p.player
+     WHERE p.day = ? GROUP BY p.player HAVING COUNT(*) = ${Puzzle.PER_DAY}
+     ORDER BY score ASC, finished ASC`, [day]);
+  const ranked = rows.map((r, i) => ({ rank: i + 1, username: r.username, score: Math.pow(10, r.score), player: r.player }));
+  const mine = viewer ? ranked.find((r) => r.player === viewer.player) : null;
+  const strip = ({ rank, username, score }) => ({ rank, username, score });
+  return { day, count: ranked.length, top: ranked.slice(0, limit).map(strip), me: mine ? strip(mine) : null };
+}
+
+function cleanText(v, max, field, { required = true } = {}) {
+  const t = typeof v === "string" ? v.trim() : "";
+  if (required && !t) throw new HttpError(400, `Please fill in the ${field}.`);
+  if (t.length > max) throw new HttpError(400, `The ${field} is too long (${max} characters max).`);
+  return t || null;
 }
 
 // A player's full history plus summary stats (for accounts).
@@ -438,6 +459,36 @@ async function handleApi(req, res, url, db, ctx) {
       return sendJson(res, 200, user ? await accountView(db, user) : { user: null });
     }
 
+    case "GET /api/leaderboard": {
+      const day = url.searchParams.has("day") ? validDay(url.searchParams.get("day")) : Puzzle.today();
+      const user = await sessionUser(db, req);
+      return sendJson(res, 200, await leaderboard(db, day, user));
+    }
+
+    /* ----- Player submissions (read by the site owner in the database) ----- */
+    case "POST /api/suggestions": {
+      if (!ctx.allowPost()) throw new HttpError(429, "Thanks! That's a lot of submissions. Try again in a few minutes.");
+      const body = await readJson(req);
+      const question = cleanText(body.question, 300, "question");
+      const answer = cleanText(body.answer, 60, "answer");
+      const unit = cleanText(body.unit, 40, "unit", { required: false });
+      const source = cleanText(body.source, 500, "source", { required: false });
+      const user = await sessionUser(db, req);
+      await db.run("INSERT INTO suggestions (id, user_id, question, answer, unit, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [crypto.randomUUID(), user ? user.id : null, question, answer, unit, source, Date.now()]);
+      return sendJson(res, 200, { ok: true });
+    }
+    case "POST /api/feedback": {
+      if (!ctx.allowPost()) throw new HttpError(429, "Thanks! That's a lot of feedback. Try again in a few minutes.");
+      const body = await readJson(req);
+      const message = cleanText(body.message, 2000, "message");
+      const contact = cleanText(body.contact, 200, "contact", { required: false });
+      const user = await sessionUser(db, req);
+      await db.run("INSERT INTO feedback (id, user_id, message, contact, created_at) VALUES (?, ?, ?, ?, ?)",
+        [crypto.randomUUID(), user ? user.id : null, message, contact, Date.now()]);
+      return sendJson(res, 200, { ok: true });
+    }
+
     case "GET /api/health":
       return sendJson(res, 200, { ok: true, today: Puzzle.today() });
     default:
@@ -459,13 +510,14 @@ function createServer({
   );
   const allow = rateLimiter();
   const authLimit = rateLimiter({ capacity: 10, refillPerSec: 1 / 6 }); // 10 tries, then 1 every 6 s
+  const postLimit = rateLimiter({ capacity: 5, refillPerSec: 1 / 120 }); // 5 submissions, then 1 every 2 min
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://localhost");
     try {
       if (url.pathname.startsWith("/api/")) {
         const ip = (trustProxy && String(req.headers["x-forwarded-for"] || "").split(",")[0].trim()) || req.socket.remoteAddress;
         if (!allow(ip)) throw new HttpError(429, "slow down");
-        return await handleApi(req, res, url, db, { trustProxy, allowAuth: () => authLimit(ip) });
+        return await handleApi(req, res, url, db, { trustProxy, allowAuth: () => authLimit(ip), allowPost: () => postLimit(ip) });
       }
       if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "method not allowed");
       return serveStatic(req, res, url.pathname, url.searchParams.get("v") === ASSET_VERSION);

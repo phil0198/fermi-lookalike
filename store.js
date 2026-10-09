@@ -40,6 +40,23 @@ const SCHEMA = [
     expires_at INTEGER NOT NULL
   )`,
   "CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user_id)",
+  // Player-submitted question ideas and general feedback, read by the site owner.
+  `CREATE TABLE IF NOT EXISTS suggestions (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT,
+    question   TEXT NOT NULL,
+    answer     TEXT NOT NULL,
+    unit       TEXT,
+    source     TEXT,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS feedback (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT,
+    message    TEXT NOT NULL,
+    contact    TEXT,
+    created_at INTEGER NOT NULL
+  )`,
 ];
 
 /* ---------------- Local SQLite ---------------- */

@@ -79,6 +79,24 @@ The front end still works without the server: `python3 -m http.server`, or GitHu
 | `test/server.test.js` | Server tests, run against both storage backends (`npm test`) |
 | `test/mock-turso.js` | Local stand-in for Turso's HTTP API, used by the tests |
 
+## Menu
+
+The ☰ button on the card opens a drawer with:
+
+- **Archive.** A grid of the last 28 days (played, in progress, today), how many puzzles you've played, and a full list of every puzzle.
+- **Leaderboard · Today.** Signed-in players who finished today, ranked by score (ties go to whoever finished first). It shows the top 3 and your position, and the full leaderboard shows the top 50.
+- **Submit a question** and **Feedback** forms.
+- **About** and **Privacy** pages.
+
+### Reading submissions
+
+Question ideas and feedback are stored in the database. In the Turso dashboard, open your database's SQL console and run:
+
+```sql
+SELECT datetime(created_at / 1000, 'unixepoch') AS sent, question, answer, unit, source FROM suggestions ORDER BY created_at DESC;
+SELECT datetime(created_at / 1000, 'unixepoch') AS sent, message, contact FROM feedback ORDER BY created_at DESC;
+```
+
 ## Adding questions
 
 Add entries to any category in `js/questions.js`:
@@ -102,6 +120,9 @@ Anonymous players send a random `player` id that the browser generates once and 
 | `POST` | `/api/login` | `{username, password, player}` | Signs in and merges anything this browser played while signed out |
 | `POST` | `/api/logout` | | Ends the session |
 | `GET` | `/api/me` | | `{user: null}`, or `{user, player, history, stats}` |
+| `GET` | `/api/leaderboard` | `?day` (defaults to today) | `{day, count, top: [{rank, username, score}], me}` |
+| `POST` | `/api/suggestions` | `{question, answer, unit?, source?}` | Stores a question idea |
+| `POST` | `/api/feedback` | `{message, contact?}` | Stores feedback |
 | `GET` | `/api/health` | | `{ok, today}` |
 
 Rules the server enforces:
